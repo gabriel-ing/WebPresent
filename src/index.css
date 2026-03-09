@@ -1,0 +1,20 @@
+:root {
+  font-family: Inter, Segoe UI, Arial, sans-serif;
+  line-height: 1.4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f3f4f6;
+  color: #111827;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
