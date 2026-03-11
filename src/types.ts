@@ -1,9 +1,12 @@
 export type StepType = 'web' | 'slide';
 
+export type SlideMediaKind = 'image' | 'video';
+
 export type SlideRef = {
   id: string;
   relativePath: string;
   sourceFileName?: string;
+  mediaKind?: SlideMediaKind;
 };
 
 export type PresentationStep = {
@@ -13,6 +16,7 @@ export type PresentationStep = {
   notes?: string;
   groupId?: string;
   url?: string;
+  webZoom?: number;
   slideRef?: SlideRef;
 };
 

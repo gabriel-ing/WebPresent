@@ -4,6 +4,25 @@ import type { DisplayInfo, Presentation, PresentationStep, SlideImportMode, Slid
 import { createId, guessTitleFromUrl, moveItem, nowIso } from './utils';
 
 const AUTOSAVE_DEBOUNCE_MS = 400;
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.m4v', '.ogv', '.ogg']);
+const MIN_WEB_ZOOM = 25;
+const MAX_WEB_ZOOM = 300;
+
+function normalizeWebZoom(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 100;
+  }
+  return Math.min(MAX_WEB_ZOOM, Math.max(MIN_WEB_ZOOM, Math.round(value)));
+}
+
+function getSlideMediaKind(slideRef?: SlideRef): 'image' | 'video' {
+  if (slideRef?.mediaKind) {
+    return slideRef.mediaKind;
+  }
+  const source = slideRef?.relativePath || slideRef?.sourceFileName || '';
+  const extension = source.includes('.') ? source.slice(source.lastIndexOf('.')).toLowerCase() : '';
+  return VIDEO_EXTENSIONS.has(extension) ? 'video' : 'image';
+}
 
 function getStepTitle(step: PresentationStep): string {
   if (step.title?.trim()) {
@@ -157,6 +176,7 @@ export default function App() {
       type: 'web',
       title,
       url,
+      webZoom: 100,
     };
 
     updatePresentation((current) => ({
@@ -192,7 +212,7 @@ export default function App() {
         mode,
       });
     } catch {
-      setToastMessage('Could not import one or more slide files.');
+      setToastMessage('Could not import one or more slide media files.');
       return;
     }
 
@@ -368,7 +388,7 @@ export default function App() {
             >
               + Web Step
             </button>
-            <button onClick={() => void addSlideSteps()}>+ Slides</button>
+            <button onClick={() => void addSlideSteps()}>+ Slides/Video</button>
           </div>
 
           {isAddingWebStep ? (
@@ -411,7 +431,9 @@ export default function App() {
                   onDragOver={(event) => event.preventDefault()}
                   onDrop={(event) => onStepDrop(event, item.id)}
                 >
-                  <span className="step-icon">{item.type === 'web' ? '🌐' : '🖼️'}</span>
+                  <span className="step-icon">
+                    {item.type === 'web' ? '🌐' : getSlideMediaKind(item.slideRef) === 'video' ? '🎬' : '🖼️'}
+                  </span>
                   <span className="step-title">{getStepTitle(item)}</span>
                   <button
                     className="delete-step-button"
@@ -433,7 +455,13 @@ export default function App() {
           {selectedStep ? (
             <>
               <div className="preview-controls">
-                <div className="preview-type">{selectedStep.type === 'web' ? 'Web page' : 'Slide image'}</div>
+                <div className="preview-type">
+                  {selectedStep.type === 'web'
+                    ? 'Web page'
+                    : getSlideMediaKind(selectedStep.slideRef) === 'video'
+                      ? 'Slide video clip'
+                      : 'Slide image'}
+                </div>
                 <label>
                   Title
                   <input
@@ -457,6 +485,19 @@ export default function App() {
                         onChange={(event) => updateSelectedStep((step) => ({ ...step, url: event.target.value }))}
                       />
                     </label>
+                    <label>
+                      Zoom (%)
+                      <input
+                        type="number"
+                        min={MIN_WEB_ZOOM}
+                        max={MAX_WEB_ZOOM}
+                        step={5}
+                        value={normalizeWebZoom(selectedStep.webZoom ?? 100)}
+                        onChange={(event) =>
+                          updateSelectedStep((step) => ({ ...step, webZoom: normalizeWebZoom(event.target.valueAsNumber) }))
+                        }
+                      />
+                    </label>
                     <div className="inline-actions">
                       <button onClick={() => void openStepExternally(selectedStep)}>Open in external browser</button>
                     </div>
@@ -474,9 +515,13 @@ export default function App() {
                     Web steps are opened as top-level pages in the presentation window to bypass iframe restrictions.
                   </div>
                 ) : getSlideUrl(selectedStep) ? (
-                  <img className="preview-image" src={getSlideUrl(selectedStep)!} alt={getStepTitle(selectedStep)} />
+                  getSlideMediaKind(selectedStep.slideRef) === 'video' ? (
+                    <video className="preview-video" src={getSlideUrl(selectedStep)!} controls preload="metadata" />
+                  ) : (
+                    <img className="preview-image" src={getSlideUrl(selectedStep)!} alt={getStepTitle(selectedStep)} />
+                  )
                 ) : (
-                  <div className="missing-slide">Missing slide image at {selectedStep.slideRef?.relativePath}</div>
+                  <div className="missing-slide">Missing slide media at {selectedStep.slideRef?.relativePath}</div>
                 )}
               </div>
             </>
