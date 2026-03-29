@@ -7,6 +7,8 @@ const crypto = require('node:crypto');
 const AdmZip = require('adm-zip');
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
+const DIRECTORY_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.svg', '.tif', '.tiff']);
+const naturalFileNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const MIN_WEB_ZOOM_PERCENT = 25;
 const MAX_WEB_ZOOM_PERCENT = 300;
 
@@ -136,6 +138,36 @@ function extensionFor(filePath) {
   return '.png';
 }
 
+function extractSlideNumber(filePath) {
+  const name = path.basename(filePath, path.extname(filePath));
+  const match = name.match(/^slide\s*([0-9]+)$/i);
+  if (!match) {
+    return null;
+  }
+  return Number.parseInt(match[1], 10);
+}
+
+function compareSlideFilePaths(a, b) {
+  const numberA = extractSlideNumber(a);
+  const numberB = extractSlideNumber(b);
+
+  if (numberA !== null && numberB !== null && numberA !== numberB) {
+    return numberA - numberB;
+  }
+  if (numberA !== null && numberB === null) {
+    return -1;
+  }
+  if (numberA === null && numberB !== null) {
+    return 1;
+  }
+
+  return naturalFileNameCollator.compare(path.basename(a), path.basename(b));
+}
+
+function sortSlidePaths(filePaths) {
+  return [...filePaths].sort(compareSlideFilePaths);
+}
+
 function mediaKindFromPath(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.mp4' || ext === '.webm' || ext === '.mov' || ext === '.m4v' || ext === '.ogv' || ext === '.ogg') {
@@ -202,7 +234,8 @@ async function importSlidesToDeck(deckId, filePaths) {
   await fs.mkdir(slidesDir, { recursive: true });
   const refs = [];
   let seq = await nextSlideNumber(deckId);
-  for (const filePath of filePaths) {
+  const orderedPaths = sortSlidePaths(filePaths);
+  for (const filePath of orderedPaths) {
     const ext = extensionFor(filePath);
     const slideBase = `slide-${String(seq).padStart(4, '0')}`;
     const fileName = `${slideBase}${ext}`;
@@ -217,6 +250,25 @@ async function importSlidesToDeck(deckId, filePaths) {
     seq += 1;
   }
   return refs;
+}
+
+async function pickDirectoryImageFiles() {
+  const result = await dialog.showOpenDialog(editorWindow ?? undefined, {
+    title: 'Select slide image folder',
+    properties: ['openDirectory'],
+  });
+  if (result.canceled || !result.filePaths[0]) {
+    return [];
+  }
+
+  const directoryPath = result.filePaths[0];
+  const entries = await fs.readdir(directoryPath, { withFileTypes: true });
+  const files = entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => path.join(directoryPath, entry.name))
+    .filter((filePath) => DIRECTORY_IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase()));
+
+  return sortSlidePaths(files);
 }
 
 async function exportDeck(deckId) {
@@ -656,6 +708,9 @@ ipcMain.handle('deck:pickSlideFiles', async () => {
     ],
   });
   return result.canceled ? [] : result.filePaths;
+});
+ipcMain.handle('deck:pickSlideDirectory', async () => {
+  return pickDirectoryImageFiles();
 });
 ipcMain.handle('deck:importSlides', async (_event, params) => {
   return importSlidesToDeck(params.deckId, params.filePaths || []);

@@ -232,6 +232,50 @@ export default function App() {
     setSelectedStepId(steps[0]?.id ?? null);
   };
 
+  const addSlideDirectorySteps = async () => {
+    if (!presentation || !window.presentApi) {
+      return;
+    }
+
+    const filePaths = await window.presentApi.pickSlideDirectory();
+    if (!filePaths.length) {
+      setToastMessage('No supported image files found in that folder.');
+      return;
+    }
+
+    const mode: SlideImportMode =
+      filePaths.length > 1 && window.confirm('Import folder as one animation group?\nOK = grouped, Cancel = separate steps')
+        ? 'grouped'
+        : 'separate';
+
+    let slideRefs: SlideRef[] = [];
+    try {
+      slideRefs = await window.presentApi.importSlides({
+        deckId: presentation.id,
+        filePaths,
+        mode,
+      });
+    } catch {
+      setToastMessage('Could not import slide folder.');
+      return;
+    }
+
+    const groupId = mode === 'grouped' && slideRefs.length > 1 ? createId('group') : undefined;
+    const steps: PresentationStep[] = slideRefs.map((slideRef) => ({
+      id: createId('step'),
+      type: 'slide',
+      title: slideRef.sourceFileName || slideRef.id,
+      groupId,
+      slideRef,
+    }));
+
+    updatePresentation((current) => ({
+      ...current,
+      items: insertAfterSelected(current.items, selectedStepId, steps),
+    }));
+    setSelectedStepId(steps[0]?.id ?? null);
+  };
+
   const updateSelectedStep = (updater: (step: PresentationStep) => PresentationStep) => {
     if (!selectedStepId) {
       return;
@@ -389,6 +433,7 @@ export default function App() {
               + Web Step
             </button>
             <button onClick={() => void addSlideSteps()}>+ Slides/Video</button>
+            <button onClick={() => void addSlideDirectorySteps()}>+ Slide Folder</button>
           </div>
 
           {isAddingWebStep ? (

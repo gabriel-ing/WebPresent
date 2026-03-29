@@ -24,6 +24,7 @@ export type PresentApi = {
   deckImport: () => Promise<Presentation | null>;
   deckExport: (deckId: string) => Promise<void>;
   pickSlideFiles: () => Promise<string[]>;
+  pickSlideDirectory: () => Promise<string[]>;
   importSlides: (params: ImportSlidesParams) => Promise<SlideRef[]>;
   resolveSlideUrl: (params: ResolveSlideParams) => Promise<string | null>;
   resolveSlideDataUrl: (params: ResolveSlideParams) => Promise<string | null>;
