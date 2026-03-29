@@ -1,7 +1,9 @@
 {
   "name": "present",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "Desktop presentation tool for mixed decks of web pages and slide images",
+  "author": "gabriel-ing",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -11,8 +13,10 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "package:dir": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",
+    "package:mac": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
+    "package:mac-dir": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --dir",
     "package:win": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis",
-    "package:all": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder"
+    "package:all": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --win"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
@@ -26,10 +30,10 @@
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
-    "electron": "^32.2.7",
-    "electron-builder": "^25.1.8",
+    "electron": "^41.1.0",
+    "electron-builder": "^26.8.1",
     "typescript": "^5.6.3",
-    "vite": "^5.4.10",
+    "vite": "^6.4.1",
     "wait-on": "^8.0.3"
   },
   "build": {
@@ -41,19 +45,43 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "node_modules/**/*",
       "package.json"
     ],
     "asar": true,
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] },
+        { "target": "zip", "arch": ["arm64", "x64"] }
+      ]
+    },
+    "dmg": {
+      "title": "${productName} ${version}",
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ],
+      "window": { "width": 540, "height": 380 }
+    },
     "win": {
       "signAndEditExecutable": false,
       "target": [
-        "nsis"
+        { "target": "nsis", "arch": ["x64"] }
       ]
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] }
+      ],
+      "category": "Utility"
     }
   }
 }

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Background rounded square -->
+  <rect width="512" height="512" rx="100" ry="100" fill="#1e1e2e"/>
+  <!-- Slide/screen shape -->
+  <rect x="72" y="120" width="368" height="230" rx="16" ry="16" fill="#313244"/>
+  <!-- Screen highlight border -->
+  <rect x="72" y="120" width="368" height="230" rx="16" ry="16" fill="none" stroke="#cba6f7" stroke-width="6"/>
+  <!-- Projection lines (triangle play/present arrow) -->
+  <polygon points="195,175 195,295 345,235" fill="#cba6f7" opacity="0.95"/>
+  <!-- Stand/base -->
+  <rect x="228" y="350" width="56" height="28" rx="6" fill="#313244"/>
+  <rect x="170" y="378" width="172" height="16" rx="8" fill="#45475a"/>
+</svg>
