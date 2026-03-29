@@ -75,6 +75,7 @@
 
 .sidebar-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   padding: 0.75rem;
   border-bottom: 1px solid #e5e7eb;
