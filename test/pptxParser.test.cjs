@@ -211,3 +211,26 @@ test('parser does not invent black borders for textbox lines without explicit fi
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test('parser ignores media-call timing when computing visible click builds', async () => {
+  const { deck, tempRoot } = await parseFixture('MMC_simpliPyTEM_presentation.pptx');
+
+  try {
+    const slideTen = deck.slides[9];
+    const delayedRevealShape = slideTen.shapes.find((shape) => shape.sourceShapeId === '481');
+
+    assert.ok(delayedRevealShape, 'expected the delayed reveal callout to be parsed');
+    assert.equal(
+      slideTen.animationStepCount,
+      1,
+      'expected media playback timing to be ignored so only visible click builds remain',
+    );
+    assert.equal(
+      delayedRevealShape.animationGroup,
+      1,
+      'expected the visible callout reveal to be assigned to the first actual click build',
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});

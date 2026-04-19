@@ -3,7 +3,10 @@
  */
 
 const crypto = require('node:crypto');
+const fs = require('node:fs/promises');
 const path = require('node:path');
+const { PNG } = require('pngjs');
+const UTIF = require('utif');
 
 // ── ID / Time ─────────────────────────────────────────────────────────────────
 
@@ -61,11 +64,57 @@ function mediaKindFromPath(filePath) {
   return VIDEO_EXTENSIONS.has(ext) ? 'video' : 'image';
 }
 
+function bufferToDataUrl(buffer, mimeType) {
+  return `data:${mimeType};base64,${buffer.toString('base64')}`;
+}
+
+function normalizeTiffDimension(value) {
+  if (Array.isArray(value)) return normalizeTiffDimension(value[0]);
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function convertTiffBufferToPngDataUrl(buffer) {
+  const ifds = UTIF.decode(buffer);
+  const frame = Array.isArray(ifds) ? ifds[0] : null;
+  if (!frame) return null;
+
+  UTIF.decodeImage(buffer, frame);
+
+  const width = normalizeTiffDimension(frame.width ?? frame.t256);
+  const height = normalizeTiffDimension(frame.height ?? frame.t257);
+  if (!width || !height) return null;
+
+  const rgba = Buffer.from(UTIF.toRGBA8(frame));
+  const png = new PNG({ width, height });
+  rgba.copy(png.data);
+
+  return bufferToDataUrl(PNG.sync.write(png), 'image/png');
+}
+
+async function readFileAsDataUrl(filePath, options = {}) {
+  const readFile = options.readFile || fs.readFile;
+  const buffer = await readFile(filePath);
+  const mimeType = mimeTypeFromPath(filePath);
+
+  if (mimeType === 'image/tiff') {
+    try {
+      const pngDataUrl = convertTiffBufferToPngDataUrl(buffer);
+      if (pngDataUrl) return pngDataUrl;
+    } catch {
+      // Fall back to the original bytes if conversion fails.
+    }
+  }
+
+  return bufferToDataUrl(buffer, mimeType);
+}
+
 module.exports = {
   nowIso,
   createId,
   extensionFor,
   mimeTypeFromPath,
   mediaKindFromPath,
+  readFileAsDataUrl,
   SLIDE_COPY_EXTENSIONS,
 };

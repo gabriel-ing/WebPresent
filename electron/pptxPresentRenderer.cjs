@@ -1,21 +1,7 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { existsSync } = require('node:fs');
-
-function mimeTypeFromPath(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === '.png') return 'image/png';
-  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
-  if (ext === '.gif') return 'image/gif';
-  if (ext === '.svg') return 'image/svg+xml';
-  if (ext === '.tif' || ext === '.tiff') return 'image/tiff';
-  if (ext === '.webp') return 'image/webp';
-  if (ext === '.mp4' || ext === '.m4v') return 'video/mp4';
-  if (ext === '.webm') return 'video/webm';
-  if (ext === '.ogv' || ext === '.ogg') return 'video/ogg';
-  if (ext === '.mov') return 'video/quicktime';
-  return 'application/octet-stream';
-}
+const { readFileAsDataUrl } = require('./utils.cjs');
 
 function escH(s) {
   return String(s)
@@ -40,6 +26,7 @@ function collectSlideMediaPaths(slide) {
 async function buildMediaDataUrlMap(deckDir, relativePaths, options = {}) {
   const readFile = options.readFile || fs.readFile;
   const fileExists = options.existsSync || existsSync;
+  const inlineMedia = options.readFileAsDataUrl || readFileAsDataUrl;
   const cache = options.cache;
   const mediaUrls = {};
   for (const relativePath of relativePaths) {
@@ -50,8 +37,7 @@ async function buildMediaDataUrlMap(deckDir, relativePaths, options = {}) {
     }
     const absolutePath = path.join(deckDir, relativePath);
     if (!fileExists(absolutePath)) continue;
-    const mimeType = mimeTypeFromPath(absolutePath);
-    const mediaUrlPromise = readFile(absolutePath).then((buffer) => `data:${mimeType};base64,${buffer.toString('base64')}`);
+    const mediaUrlPromise = inlineMedia(absolutePath, { readFile });
     if (cache) cache.set(relativePath, mediaUrlPromise);
     mediaUrls[relativePath] = await mediaUrlPromise;
   }

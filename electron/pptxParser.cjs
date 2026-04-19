@@ -1045,9 +1045,10 @@ function parseClickSequence(seqNode, animMap, paragraphBuildTargets) {
 
   let clickIndex = 0;
   for (const par of parList) {
-    clickIndex++;
     const targets = new Map();
     collectTargetsFromPar(par, targets);
+    if (!targets.size) continue;
+    clickIndex++;
     for (const [target, effect] of targets.entries()) {
       registerAnimationTarget(target, clickIndex, effect, animMap, paragraphBuildTargets);
     }

@@ -6,7 +6,7 @@ const { pathToFileURL } = require('node:url');
 
 const { getDeckDir, createDeck, loadDeck, saveDeck, getOrCreateInitialDeck, exportDeck, importDeck } = require('./deckManager.cjs');
 const { importSlidesToDeck, pickSlideFiles, pickDirectoryImageFiles, pickPptxFile } = require('./slideImporter.cjs');
-const { mimeTypeFromPath } = require('./utils.cjs');
+const { mimeTypeFromPath, readFileAsDataUrl } = require('./utils.cjs');
 const { parsePptx } = require('./pptxParser.cjs');
 const { buildPptxPresentationDocument, buildPptxRuntimeUpdateScript, createPptxPresentationDocumentBuilder } = require('./pptxPresentRenderer.cjs');
 const { createLatestOnlyQueue } = require('./latestOnlyQueue.cjs');
@@ -59,9 +59,7 @@ function buildSlideHtml(title, fileUrl, missingReason, mediaKind = 'image') {
 async function readSlideAsDataUrl(deckId, relativePath) {
   const absolutePath = path.join(getDeckDir(deckId), relativePath);
   if (!existsSync(absolutePath)) return null;
-  const mimeType = mimeTypeFromPath(absolutePath);
-  const buffer = await fs.readFile(absolutePath);
-  return `data:${mimeType};base64,${buffer.toString('base64')}`;
+  return readFileAsDataUrl(absolutePath);
 }
 
 function getSlideFileUrl(deckId, relativePath) {
