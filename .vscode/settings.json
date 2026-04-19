@@ -3,6 +3,7 @@
         "/^node --test test/pptxParser\\.test\\.cjs test/pptxPresentRenderer\\.test\\.cjs test/electronUtils\\.test\\.cjs 2>&1$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "unzip": true
     }
 }

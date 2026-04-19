@@ -186,3 +186,28 @@ test('parser keeps alternate-content fallback shapes so equation text boxes stil
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test('parser does not invent black borders for textbox lines without explicit fill', async () => {
+  const { deck, tempRoot } = await parseFixture('MMC_simpliPyTEM_presentation.pptx');
+
+  try {
+    const slideOne = deck.slides[0];
+    const subtitleShape = slideOne.shapes.find((shape) => shape.sourceShapeId === '199');
+    const documentationShape = slideOne.shapes.find((shape) => shape.sourceShapeId === '201');
+
+    assert.ok(subtitleShape, 'expected the subtitle text box to be parsed');
+    assert.ok(documentationShape, 'expected the documentation text box to be parsed');
+    assert.equal(
+      subtitleShape.border,
+      undefined,
+      'expected inherited textbox defaults without line fill to stay borderless',
+    );
+    assert.equal(
+      documentationShape.border,
+      undefined,
+      'expected textbox lines without explicit fill to stay borderless',
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});

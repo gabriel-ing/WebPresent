@@ -251,18 +251,17 @@ function extractColour(node, themeColours) {
 function parseBorder(spPr, themeColours) {
   const ln = spPr?.['a:ln'];
   if (!ln) return undefined;
+  if (ln['a:noFill'] !== undefined) return undefined;
+
+  const solidFill = ln['a:solidFill'];
+  if (!solidFill) return undefined;
+
   const widthEmu = Number(ln['@_w'] || 0);
   if (!widthEmu) return undefined;
   const widthPt = emuToPt(widthEmu);
 
-  let colour = '#000000';
-  const solidFill = ln['a:solidFill'];
-  if (solidFill) {
-    colour = extractColour(solidFill, themeColours) || colour;
-  }
-
-  const noFill = ln['a:noFill'];
-  if (noFill !== undefined) return undefined;
+  const colour = extractColour(solidFill, themeColours);
+  if (!colour) return undefined;
 
   const prstDash = ln['a:prstDash']?.['@_val'];
   let style = 'solid';

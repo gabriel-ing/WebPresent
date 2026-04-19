@@ -9,6 +9,7 @@ const { importSlidesToDeck, pickSlideFiles, pickDirectoryImageFiles, pickPptxFil
 const { mimeTypeFromPath } = require('./utils.cjs');
 const { parsePptx } = require('./pptxParser.cjs');
 const { buildPptxPresentationDocument, buildPptxRuntimeUpdateScript, createPptxPresentationDocumentBuilder } = require('./pptxPresentRenderer.cjs');
+const { createLatestOnlyQueue } = require('./latestOnlyQueue.cjs');
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
 
@@ -26,7 +27,7 @@ let presentationWindow = null;
 let currentPresentationDeck = null;
 let currentPresentationIndex = 0;
 let requestedPresentationIndex = 0;
-let presentationNavigationQueue = Promise.resolve();
+let enqueuePresentationStep = null;
 let buildCachedPptxPresentationDocument = null;
 let lastPresentedStep = null;
 
@@ -212,13 +213,14 @@ async function showPresentationStep(index) {
   lastPresentedStep = step;
 }
 
-function queuePresentationStep(index) {
-  presentationNavigationQueue = presentationNavigationQueue
-    .then(() => showPresentationStep(index))
-    .catch((error) => {
-      if (!isIgnorableLoadError(error)) console.error('Could not load queued presentation step.', error);
-    });
-  return presentationNavigationQueue;
+function requestPresentationStep(index) {
+  if (!currentPresentationDeck || !enqueuePresentationStep) return Promise.resolve();
+  const boundedIndex = Math.max(0, Math.min(index, currentPresentationDeck.items.length - 1));
+  if (boundedIndex === requestedPresentationIndex && boundedIndex === currentPresentationIndex) {
+    return Promise.resolve();
+  }
+  requestedPresentationIndex = boundedIndex;
+  return enqueuePresentationStep(boundedIndex);
 }
 
 function withPresentationErrorLogging(task, fallbackMessage) {
@@ -231,15 +233,13 @@ async function goToNextPresentationStep() {
   if (!currentPresentationDeck) return;
   const maxIndex = currentPresentationDeck.items.length - 1;
   if (requestedPresentationIndex < maxIndex) {
-    requestedPresentationIndex += 1;
-    await queuePresentationStep(requestedPresentationIndex);
+    await requestPresentationStep(requestedPresentationIndex + 1);
   }
 }
 
 async function goToPreviousPresentationStep() {
   if (requestedPresentationIndex > 0) {
-    requestedPresentationIndex -= 1;
-    await queuePresentationStep(requestedPresentationIndex);
+    await requestPresentationStep(requestedPresentationIndex - 1);
   }
 }
 
@@ -247,7 +247,7 @@ function resetPresentationState() {
   currentPresentationDeck = null;
   currentPresentationIndex = 0;
   requestedPresentationIndex = 0;
-  presentationNavigationQueue = Promise.resolve();
+  enqueuePresentationStep = null;
   buildCachedPptxPresentationDocument = null;
   lastPresentedStep = null;
 }
@@ -271,7 +271,9 @@ async function startPresentation(deckId, startIndex = 0, displayId) {
   currentPresentationDeck = deck;
   currentPresentationIndex = Math.min(Math.max(0, startIndex), deck.items.length - 1);
   requestedPresentationIndex = currentPresentationIndex;
-  presentationNavigationQueue = Promise.resolve();
+  enqueuePresentationStep = createLatestOnlyQueue(async (index) => {
+    await showPresentationStep(index);
+  });
   buildCachedPptxPresentationDocument = createPptxPresentationDocumentBuilder(getDeckDir(deck.id));
 
   if (presentationWindow && !presentationWindow.isDestroyed()) {
