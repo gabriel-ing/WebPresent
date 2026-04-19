@@ -186,6 +186,7 @@
   align-items: center;
   justify-content: center;
   position: relative;
+  overflow: hidden;
 }
 
 .preview-iframe {
@@ -325,4 +326,111 @@
   .main-layout {
     grid-template-columns: 1fr;
   }
+}
+
+/* ── PPTX Slide Preview & Inline Editing ─────────────────────────────────── */
+
+.pptx-preview-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  align-self: stretch;
+}
+
+.pptx-preview-iframe {
+  flex: 1;
+  width: 100%;
+  min-height: 200px;
+  border: none;
+  background: #000;
+}
+
+.pptx-text-edit-panel {
+  border-top: 1px solid #e5e7eb;
+  padding: 0.65rem;
+  background: #ffffff;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.pptx-text-edit-header {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 0.4rem;
+}
+
+.pptx-text-shape-item {
+  margin-bottom: 0.35rem;
+}
+
+.pptx-text-shape-button {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  border-radius: 0.375rem;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.pptx-text-shape-button:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.pptx-shape-label {
+  font-weight: 600;
+  font-size: 0.78rem;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.pptx-shape-text-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #111827;
+}
+
+.pptx-inline-edit {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.pptx-inline-edit textarea {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #3b82f6;
+  border-radius: 0.375rem;
+  font-size: 0.9rem;
+  resize: vertical;
+  min-height: 56px;
+}
+
+.pptx-inline-edit-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.pptx-inline-edit-actions button {
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  border-radius: 0.375rem;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.pptx-inline-edit-actions button:first-child {
+  background: #3b82f6;
+  color: #ffffff;
+  border-color: #3b82f6;
 }

@@ -1,4 +1,4 @@
-import type { DisplayInfo, Presentation, SlideImportMode, SlideRef } from './types';
+import type { DisplayInfo, Presentation, PptxDeckData, SlideImportMode, SlideRef } from './types';
 
 type StartPresentationParams = {
   deckId: string;
@@ -17,6 +17,11 @@ type ResolveSlideParams = {
   relativePath: string;
 };
 
+type ImportPptxParams = {
+  deckId: string;
+  filePath: string;
+};
+
 export type PresentApi = {
   deckGetCurrent: () => Promise<Presentation>;
   deckCreate: () => Promise<Presentation>;
@@ -28,6 +33,8 @@ export type PresentApi = {
   importSlides: (params: ImportSlidesParams) => Promise<SlideRef[]>;
   resolveSlideUrl: (params: ResolveSlideParams) => Promise<string | null>;
   resolveSlideDataUrl: (params: ResolveSlideParams) => Promise<string | null>;
+  pickPptxFile: () => Promise<string | null>;
+  importPptx: (params: ImportPptxParams) => Promise<PptxDeckData>;
   startPresentation: (params: StartPresentationParams) => Promise<void>;
   stopPresentation: () => Promise<void>;
   getDisplays: () => Promise<DisplayInfo[]>;

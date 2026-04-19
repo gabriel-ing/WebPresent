@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('presentApi', {
   importSlides: (params) => ipcRenderer.invoke('deck:importSlides', params),
   resolveSlideUrl: (params) => ipcRenderer.invoke('deck:resolveSlideUrl', params),
   resolveSlideDataUrl: (params) => ipcRenderer.invoke('deck:resolveSlideDataUrl', params),
+  pickPptxFile: () => ipcRenderer.invoke('deck:pickPptxFile'),
+  importPptx: (params) => ipcRenderer.invoke('deck:importPptx', params),
   startPresentation: (params) => ipcRenderer.invoke('presentation:start', params),
   stopPresentation: () => ipcRenderer.invoke('presentation:stop'),
   getDisplays: () => ipcRenderer.invoke('system:getDisplays'),
