@@ -14,7 +14,11 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@webpresent/pptx-engine": ["packages/pptx-engine/src/index.ts"]
+    }
   },
   "include": ["src"]
 }

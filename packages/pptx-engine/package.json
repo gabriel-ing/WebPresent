@@ -1,0 +1,29 @@
+{
+  "name": "@webpresent/pptx-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PPTX parsing and rendering engine for WebPresent",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.cjs",
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "fast-xml-parser": "^5.5.9"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.6.3"
+  }
+}
