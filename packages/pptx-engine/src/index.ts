@@ -21,3 +21,4 @@ export {
   renderShape,
   buildSlideState,
 } from './renderCore';
+export { parsePptx } from './parser';

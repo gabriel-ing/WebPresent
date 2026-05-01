@@ -11,8 +11,21 @@ export default defineConfig({
     alias: {
       '@webpresent/pptx-engine': path.resolve(
         __dirname,
-        'packages/pptx-engine/src/index.ts',
+        'packages/pptx-engine/dist/index.js',
       ),
+    },
+  },
+  build: {
+    rollupOptions: {
+      external: [
+        'fs',
+        'fs/promises',
+        'path',
+        'node:fs',
+        'node:fs/promises',
+        'node:path',
+        'adm-zip',
+      ],
     },
   },
 });
