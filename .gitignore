@@ -4,3 +4,4 @@ node_modules/
 release
 .github/
 .DS_Stores
+*.pptx
