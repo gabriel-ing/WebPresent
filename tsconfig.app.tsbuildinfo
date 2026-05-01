@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/electron.d.ts","./src/main.tsx","./src/pptxrenderer.ts","./src/steputils.ts","./src/types.ts","./src/utils.ts","./src/components/pptxslidepreview.tsx","./src/components/stepdetail.tsx","./src/components/stepsidebar.tsx","./src/hooks/usepresentation.ts","./src/hooks/useslideurls.ts"],"version":"5.9.3"}

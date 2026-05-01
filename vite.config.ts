@@ -11,9 +11,12 @@ export default defineConfig({
     alias: {
       '@webpresent/pptx-engine': path.resolve(
         __dirname,
-        'packages/pptx-engine/dist/index.js',
+        'packages/pptx-engine/src/browser.ts',
       ),
     },
+  },
+  optimizeDeps: {
+    exclude: ['adm-zip', 'fast-xml-parser'],
   },
   build: {
     rollupOptions: {
@@ -25,6 +28,7 @@ export default defineConfig({
         'node:fs/promises',
         'node:path',
         'adm-zip',
+        'fast-xml-parser',
       ],
     },
   },
