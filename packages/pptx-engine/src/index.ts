@@ -12,3 +12,12 @@ export type {
 
 export { ANIMATION_KEYFRAMES } from './animationCss';
 export { clampCrop, getCroppedImageStyles } from './imageHelpers';
+export type { SlideState } from './renderCore';
+export {
+  escHtml,
+  fillToCss,
+  renderTextRun,
+  renderParagraph,
+  renderShape,
+  buildSlideState,
+} from './renderCore';
