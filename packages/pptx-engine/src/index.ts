@@ -9,3 +9,6 @@ export type {
   PptxSlideData,
   PptxDeckData,
 } from './types';
+
+export { ANIMATION_KEYFRAMES } from './animationCss';
+export { clampCrop, getCroppedImageStyles } from './imageHelpers';
