@@ -72,7 +72,7 @@ function buildPptxSlideHtml(slideData, animationStep, mediaUrls) {
 html,body{width:100%;height:100%;overflow:hidden;background:#000}
 ${ANIMATION_KEYFRAMES}
 .slide-root{position:absolute;left:0;top:0;transform-origin:0 0;overflow:hidden;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:18pt;color:#000}
-</style><script>
+</style></head><body><div class="slide-root"></div><script>
 (function(){
   function fit(){
     var r=document.querySelector('.slide-root');
@@ -105,7 +105,7 @@ ${ANIMATION_KEYFRAMES}
   if(window.ResizeObserver){new ResizeObserver(fit).observe(document.documentElement);}
   window.__WEBPRESENT_UPDATE_PPTX(${initialState});
 })()
-</script></head><body><div class="slide-root"></div></body></html>`;
+</script></body></html>`;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

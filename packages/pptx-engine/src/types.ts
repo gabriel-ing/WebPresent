@@ -17,6 +17,7 @@ export type PptxParagraph = {
   alignment?: 'left' | 'center' | 'right' | 'justify';
   bulletType?: 'none' | 'bullet' | 'numbered';
   bulletChar?: string;
+  lineSpacing?: number;
   level?: number;
   animationGroup?: number;
 };
@@ -28,17 +29,33 @@ export type PptxImageCrop = {
   bottom?: number;
 };
 
+export type PptxTextInsets = {
+  left?: number;
+  top?: number;
+  right?: number;
+  bottom?: number;
+};
+
+export type PptxGradientStop = {
+  position: number;
+  colour: string;
+  opacity?: number;
+};
+
 export type PptxFill = {
   type: 'solid' | 'image' | 'gradient' | 'none';
   colour?: string;
   imageRelativePath?: string;
-  gradientStops?: { position: number; colour: string }[];
+  gradientStops?: PptxGradientStop[];
+  gradientAngle?: number;
 };
 
 export type PptxBorder = {
   width: number;
-  colour: string;
+  colour?: string;
   style?: 'solid' | 'dashed' | 'dotted';
+  gradientStops?: PptxGradientStop[];
+  gradientAngle?: number;
 };
 
 export type PptxShape = {
@@ -57,8 +74,15 @@ export type PptxShape = {
   imageCrop?: PptxImageCrop;
   cornerRadius?: number;
   verticalAlign?: 'top' | 'middle' | 'bottom';
+  textFitScale?: number;
+  textInsets?: PptxTextInsets;
+  lineHead?: string;
+  lineTail?: string;
   flipH?: boolean;
   flipV?: boolean;
+  svgPath?: string;
+  svgViewBoxWidth?: number;
+  svgViewBoxHeight?: number;
   animationGroup: number;
   animationEffect?: 'appear' | 'fade' | 'fly-left' | 'fly-right' | 'fly-up' | 'fly-down';
 };
@@ -79,5 +103,9 @@ export type PptxDeckData = {
   theme?: {
     colours: Record<string, string>;
     defaultFont?: string;
+    lineStyles?: Array<{
+      width?: number;
+      style?: 'solid' | 'dashed' | 'dotted';
+    }>;
   };
 };

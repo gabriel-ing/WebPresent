@@ -5,3 +5,4 @@ release
 .github/
 .DS_Stores
 *.pptx
+.tmp-decks/

@@ -129,6 +129,268 @@ test('PPTX HTML applies image crop styles and paragraph-build visibility', async
   }
 });
 
+test('PPTX HTML styles bullet markers using the paragraph typography', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'webpresent-pptx-present-'));
+  const deckDir = path.join(tempRoot, 'deck');
+
+  try {
+    await mkdir(deckDir, { recursive: true });
+
+    const slide = {
+      slideIndex: 0,
+      width: 960,
+      height: 540,
+      shapes: [
+        {
+          id: 'shape-1',
+          type: 'rect',
+          x: 0,
+          y: 120,
+          width: 400,
+          height: 120,
+          animationGroup: 0,
+          paragraphs: [
+            {
+              bulletType: 'bullet',
+              bulletChar: '•',
+              runs: [
+                {
+                  text: 'Learn something new',
+                  fontSize: 28,
+                  fontFamily: 'Gotham Book',
+                  colour: '#000000',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      animationStepCount: 0,
+    };
+
+    const html = await buildPptxPresentationDocument(slide, 0, deckDir);
+
+    assert.match(html, /margin-right:0\.4em;font-size:28pt;font-family:Gotham Book,sans-serif;color:#000000|font-size:28pt;font-family:Gotham Book,sans-serif;color:#000000;margin-right:0\.4em/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('PPTX HTML keeps empty bullet spacer paragraphs without rendering a bullet marker', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'webpresent-pptx-present-'));
+  const deckDir = path.join(tempRoot, 'deck');
+
+  try {
+    await mkdir(deckDir, { recursive: true });
+
+    const slide = {
+      slideIndex: 0,
+      width: 960,
+      height: 540,
+      shapes: [
+        {
+          id: 'shape-1',
+          type: 'rect',
+          x: 0,
+          y: 120,
+          width: 500,
+          height: 220,
+          animationGroup: 0,
+          paragraphs: [
+            {
+              bulletType: 'bullet',
+              runs: [
+                {
+                  text: 'First bullet',
+                  fontSize: 20,
+                  fontFamily: 'Verdana',
+                },
+              ],
+            },
+            {
+              bulletType: 'bullet',
+              runs: [
+                {
+                  text: '',
+                  fontSize: 20,
+                  fontFamily: 'Verdana',
+                },
+              ],
+            },
+            {
+              bulletType: 'bullet',
+              runs: [
+                {
+                  text: 'Second bullet',
+                  fontSize: 20,
+                  fontFamily: 'Verdana',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      animationStepCount: 0,
+    };
+
+    const html = await buildPptxPresentationDocument(slide, 0, deckDir);
+    const bulletCount = (html.match(/>•<\/span>/g) || []).length;
+
+    assert.equal(bulletCount, 2);
+    assert.match(html, /&nbsp;/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('PPTX HTML renders straight connector arrows as SVG lines', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'webpresent-pptx-present-'));
+  const deckDir = path.join(tempRoot, 'deck');
+
+  try {
+    await mkdir(deckDir, { recursive: true });
+
+    const slide = {
+      slideIndex: 0,
+      width: 960,
+      height: 540,
+      shapes: [
+        {
+          id: 'shape-connector',
+          type: 'line',
+          x: 100,
+          y: 120,
+          width: 200,
+          height: 100,
+          flipV: true,
+          lineTail: 'triangle',
+          border: {
+            width: 6,
+            colour: '#000000',
+            style: 'solid',
+          },
+          animationGroup: 0,
+        },
+      ],
+      animationStepCount: 0,
+    };
+
+    const html = await buildPptxPresentationDocument(slide, 0, deckDir);
+
+    assert.match(html, /marker-end=\\"url\(#shape-connector-tail\)\\"/);
+    assert.match(html, /<line[^>]*x1=\\"0\\"[^>]*y1=\\"100\\"[^>]*x2=\\"200\\"[^>]*y2=\\"0\\"/);
+    assert.doesNotMatch(html, /border-top:/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('PPTX HTML honors explicit zero text insets on text boxes', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'webpresent-pptx-present-'));
+  const deckDir = path.join(tempRoot, 'deck');
+
+  try {
+    await mkdir(deckDir, { recursive: true });
+
+    const slide = {
+      slideIndex: 0,
+      width: 960,
+      height: 540,
+      shapes: [
+        {
+          id: 'shape-1',
+          type: 'rect',
+          x: 0,
+          y: 120,
+          width: 320,
+          height: 40,
+          animationGroup: 0,
+          textInsets: { left: 0, top: 0, right: 0, bottom: 0 },
+          paragraphs: [
+            {
+              runs: [
+                {
+                  text: 'What the agent sees:',
+                  fontSize: 16,
+                  fontFamily: 'Verdana',
+                  bold: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      animationStepCount: 0,
+    };
+
+    const html = await buildPptxPresentationDocument(slide, 0, deckDir);
+
+    assert.match(html, /padding:0px 0px 0px 0px/);
+    assert.match(html, /What the agent sees:/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('PPTX HTML applies paragraph line spacing and omits trailing empty paragraphs', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'webpresent-pptx-present-'));
+  const deckDir = path.join(tempRoot, 'deck');
+
+  try {
+    await mkdir(deckDir, { recursive: true });
+
+    const slide = {
+      slideIndex: 0,
+      width: 960,
+      height: 540,
+      shapes: [
+        {
+          id: 'shape-1',
+          type: 'rect',
+          x: 0,
+          y: 120,
+          width: 400,
+          height: 220,
+          animationGroup: 0,
+          paragraphs: [
+            {
+              lineSpacing: 2,
+              runs: [
+                {
+                  text: 'Schedule item',
+                  fontSize: 20,
+                  fontFamily: 'Gotham Book',
+                  colour: '#000000',
+                },
+              ],
+            },
+            {
+              bulletType: 'bullet',
+              runs: [
+                {
+                  text: '',
+                  fontSize: 18,
+                  fontFamily: 'Gotham Book',
+                  colour: '#000000',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      animationStepCount: 0,
+    };
+
+    const html = await buildPptxPresentationDocument(slide, 0, deckDir);
+
+    assert.match(html, /line-height:2/);
+    assert.match(html, /Schedule item/);
+    assert.doesNotMatch(html, /•/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('cached PPTX document builder reuses media file reads across steps', async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'webpresent-pptx-present-'));
   const deckDir = path.join(tempRoot, 'deck');
@@ -213,6 +475,185 @@ test('PPTX runtime helper supports in-place slide updates between builds', async
     assert.match(html, /window\.__WEBPRESENT_UPDATE_PPTX/);
     assert.match(updateScript, /window\.__WEBPRESENT_UPDATE_PPTX/);
     assert.match(updateScript, /Second bullet/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('fullscreen PPTX HTML applies the initial state after the slide root exists', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'webpresent-pptx-present-'));
+  const deckDir = path.join(tempRoot, 'deck');
+
+  try {
+    await mkdir(deckDir, { recursive: true });
+
+    const slide = {
+      slideIndex: 0,
+      width: 400,
+      height: 225,
+      shapes: [
+        {
+          id: 'shape-1',
+          type: 'rect',
+          x: 10,
+          y: 20,
+          width: 100,
+          height: 50,
+          animationGroup: 0,
+          animationEffect: 'appear',
+        },
+      ],
+      animationStepCount: 0,
+    };
+
+    const html = await buildPptxPresentationDocument(slide, 0, deckDir);
+    const slideRootIndex = html.indexOf('<div class="slide-root"></div>');
+    const initialUpdateIndex = html.lastIndexOf('window.__WEBPRESENT_UPDATE_PPTX(');
+
+    assert.ok(slideRootIndex !== -1, 'expected the fullscreen document to include the slide root');
+    assert.ok(
+      initialUpdateIndex > slideRootIndex,
+      'expected the initial PPTX state to be applied after the slide root exists',
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('PPTX HTML scales text runs when the shape requests norm autofit', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'webpresent-pptx-present-'));
+  const deckDir = path.join(tempRoot, 'deck');
+
+  try {
+    await mkdir(deckDir, { recursive: true });
+
+    const slide = {
+      slideIndex: 0,
+      width: 400,
+      height: 225,
+      shapes: [
+        {
+          id: 'shape-1',
+          type: 'rect',
+          x: 0,
+          y: 0,
+          width: 200,
+          height: 100,
+          textFitScale: 0.9,
+          paragraphs: [
+            {
+              runs: [
+                {
+                  text: 'Scaled title',
+                  fontSize: 44,
+                  fontFamily: 'Verdana',
+                  colour: '#00B2A9',
+                  bold: true,
+                },
+              ],
+            },
+          ],
+          animationGroup: 0,
+          animationEffect: 'appear',
+        },
+      ],
+      animationStepCount: 0,
+    };
+
+    const html = await buildPptxPresentationDocument(slide, 0, deckDir);
+
+    assert.match(html, /font-size:39\.6pt/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('PPTX HTML preserves configured gradient angles and stop ordering', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'webpresent-pptx-present-'));
+  const deckDir = path.join(tempRoot, 'deck');
+
+  try {
+    await mkdir(deckDir, { recursive: true });
+
+    const slide = {
+      slideIndex: 0,
+      width: 400,
+      height: 225,
+      shapes: [],
+      background: {
+        type: 'gradient',
+        gradientAngle: 45,
+        gradientStops: [
+          { position: 100, colour: '#2F2A95' },
+          { position: 0, colour: '#FFFFFF' },
+          { position: 62, colour: '#000000' },
+        ],
+      },
+      animationStepCount: 0,
+    };
+
+    const html = await buildPptxPresentationDocument(slide, 0, deckDir);
+
+    assert.match(
+      html,
+      /"backgroundCss":"linear-gradient\(45deg, #FFFFFF 0%, #000000 62%, #2F2A95 100%\)"/,
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('PPTX HTML renders freeform geometry as SVG instead of axis-aligned boxes', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'webpresent-pptx-present-'));
+  const deckDir = path.join(tempRoot, 'deck');
+
+  try {
+    await mkdir(deckDir, { recursive: true });
+
+    const slide = {
+      slideIndex: 0,
+      width: 320,
+      height: 180,
+      shapes: [
+        {
+          id: 'freeform-1',
+          type: 'freeform',
+          x: 20,
+          y: 10,
+          width: 100,
+          height: 120,
+          svgPath: 'M 0 0 L 100 20 L 100 120 L 0 90 Z',
+          svgViewBoxWidth: 100,
+          svgViewBoxHeight: 120,
+          fill: {
+            type: 'gradient',
+            gradientAngle: 210,
+            gradientStops: [
+              { position: 0, colour: '#92C0E9' },
+              { position: 100, colour: '#2F2A95' },
+            ],
+          },
+          border: {
+            width: 1.5,
+            gradientAngle: 180,
+            gradientStops: [
+              { position: 0, colour: '#00B2A9' },
+              { position: 100, colour: '#006B68' },
+            ],
+          },
+          animationGroup: 0,
+          animationEffect: 'appear',
+        },
+      ],
+      animationStepCount: 0,
+    };
+
+    const html = await buildPptxPresentationDocument(slide, 0, deckDir);
+
+    assert.match(html, /<svg[^>]+viewBox=\\"0 0 100 120\\"/);
+    assert.match(html, /<path[^>]+d=\\"M 0 0 L 100 20 L 100 120 L 0 90 Z\\"/);
+    assert.match(html, /<linearGradient/);
+    assert.doesNotMatch(html, /background:linear-gradient\(210deg/);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

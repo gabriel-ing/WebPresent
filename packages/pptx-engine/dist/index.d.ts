@@ -13,6 +13,7 @@ type PptxParagraph = {
     alignment?: 'left' | 'center' | 'right' | 'justify';
     bulletType?: 'none' | 'bullet' | 'numbered';
     bulletChar?: string;
+    lineSpacing?: number;
     level?: number;
     animationGroup?: number;
 };
@@ -22,19 +23,30 @@ type PptxImageCrop = {
     right?: number;
     bottom?: number;
 };
+type PptxTextInsets = {
+    left?: number;
+    top?: number;
+    right?: number;
+    bottom?: number;
+};
+type PptxGradientStop = {
+    position: number;
+    colour: string;
+    opacity?: number;
+};
 type PptxFill = {
     type: 'solid' | 'image' | 'gradient' | 'none';
     colour?: string;
     imageRelativePath?: string;
-    gradientStops?: {
-        position: number;
-        colour: string;
-    }[];
+    gradientStops?: PptxGradientStop[];
+    gradientAngle?: number;
 };
 type PptxBorder = {
     width: number;
-    colour: string;
+    colour?: string;
     style?: 'solid' | 'dashed' | 'dotted';
+    gradientStops?: PptxGradientStop[];
+    gradientAngle?: number;
 };
 type PptxShape = {
     id: string;
@@ -52,8 +64,15 @@ type PptxShape = {
     imageCrop?: PptxImageCrop;
     cornerRadius?: number;
     verticalAlign?: 'top' | 'middle' | 'bottom';
+    textFitScale?: number;
+    textInsets?: PptxTextInsets;
+    lineHead?: string;
+    lineTail?: string;
     flipH?: boolean;
     flipV?: boolean;
+    svgPath?: string;
+    svgViewBoxWidth?: number;
+    svgViewBoxHeight?: number;
     animationGroup: number;
     animationEffect?: 'appear' | 'fade' | 'fly-left' | 'fly-right' | 'fly-up' | 'fly-down';
 };
@@ -72,6 +91,10 @@ type PptxDeckData = {
     theme?: {
         colours: Record<string, string>;
         defaultFont?: string;
+        lineStyles?: Array<{
+            width?: number;
+            style?: 'solid' | 'dashed' | 'dotted';
+        }>;
     };
 };
 
@@ -97,53 +120,17 @@ declare function clampCrop(value: number | undefined): number;
  */
 declare function getCroppedImageStyles(shape: PptxShape): string;
 
-/**
- * The minimal serialisable state needed to render or update a slide.
- * Passed as JSON to `window.__WEBPRESENT_UPDATE_PPTX` for in-place updates.
- */
 type SlideState = {
     width: number;
     height: number;
     backgroundCss: string;
     shapesHtml: string;
 };
-/** Escapes a string for safe inline use in HTML text content and attribute values. */
 declare function escHtml(s: string): string;
-/**
- * Converts a PptxFill to a CSS background value.
- *
- * @param fill - The fill descriptor from the parsed shape or slide background.
- * @param mediaResolver - Called with a relative media path; returns a data URL
- *   or absolute URL. Defaults to returning an empty string (no media).
- */
 declare function fillToCss(fill: PptxFill | undefined, mediaResolver?: (path: string) => string): string;
-/** Renders a single styled text run to an HTML `<span>`. */
-declare function renderTextRun(run: PptxTextRun): string;
-/** Renders a single paragraph (already filtered for visibility) to a `<p>`. */
-declare function renderParagraph(para: PptxParagraph): string;
-/**
- * Renders a single shape to an HTML string.
- *
- * Returns an empty string for shapes whose `animationGroup` is greater than
- * `animationStep` (not yet visible at the current build step).
- *
- * @param shape - Parsed shape from PptxSlideData.
- * @param animationStep - Current build step index (0 = all non-animated shapes visible).
- * @param mediaResolver - Resolves a relative media path to a URL.
- */
+declare function renderTextRun(run: PptxTextRun, fontScale?: number): string;
+declare function renderParagraph(para: PptxParagraph, fontScale?: number): string;
 declare function renderShape(shape: PptxShape, animationStep: number, mediaResolver?: (path: string) => string): string;
-/**
- * Converts a PptxSlideData snapshot at a given animation step into a
- * serialisable `SlideState` object containing all pre-rendered HTML/CSS.
- *
- * This is the shared core used by both the Electron presentation renderer
- * (which serialises state as JSON for `__WEBPRESENT_UPDATE_PPTX`) and the
- * React editor preview renderer (which wraps it in a static HTML document).
- *
- * @param slide - Parsed slide data from PptxDeckData.
- * @param animationStep - Which animation build step to render (0-based).
- * @param mediaResolver - Resolves a relative media path to a data URL or URL.
- */
 declare function buildSlideState(slide: PptxSlideData, animationStep: number, mediaResolver?: (path: string) => string): SlideState;
 
 /**

@@ -60,6 +60,8 @@ function createXmlParser() {
     attributeNamePrefix: '@_',
     allowBooleanAttributes: true,
     parseAttributeValue: false, // keep as strings to avoid precision loss
+    parseTagValue: false,
+    trimValues: false,
     isArray: (name) => {
       // Force arrays for elements that can repeat
       const alwaysArray = new Set([
@@ -110,6 +112,10 @@ const SCHEME_COLOUR_MAP = {
   lt1: 'bg1',
   dk2: 'tx2',
   lt2: 'bg2',
+  tx1: 'dk1',
+  bg1: 'lt1',
+  tx2: 'dk2',
+  bg2: 'lt2',
 };
 
 function resolveSchemeColour(schemeKey, themeColours) {
@@ -118,10 +124,63 @@ function resolveSchemeColour(schemeKey, themeColours) {
   return themeColours[mapped] || themeColours[schemeKey] || undefined;
 }
 
+function clampColourChannel(value) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function applyColourTransforms(colour, colourNode) {
+  const normalized = normColour(colour);
+  if (!normalized || !colourNode) return normalized || colour;
+
+  let channels = [
+    Number.parseInt(normalized.slice(1, 3), 16),
+    Number.parseInt(normalized.slice(3, 5), 16),
+    Number.parseInt(normalized.slice(5, 7), 16),
+  ];
+
+  const tint = Number(colourNode['a:tint']?.['@_val']);
+  if (Number.isFinite(tint)) {
+    const amount = tint / 100000;
+    channels = channels.map((channel) => channel + (255 - channel) * amount);
+  }
+
+  const shade = Number(colourNode['a:shade']?.['@_val']);
+  if (Number.isFinite(shade)) {
+    const amount = shade / 100000;
+    channels = channels.map((channel) => channel * amount);
+  }
+
+  const lumMod = Number(colourNode['a:lumMod']?.['@_val']);
+  if (Number.isFinite(lumMod)) {
+    const amount = lumMod / 100000;
+    channels = channels.map((channel) => channel * amount);
+  }
+
+  const lumOff = Number(colourNode['a:lumOff']?.['@_val']);
+  if (Number.isFinite(lumOff)) {
+    const amount = lumOff / 100000;
+    channels = channels.map((channel) => channel + 255 * amount);
+  }
+
+  return `#${channels.map((channel) => clampColourChannel(channel).toString(16).padStart(2, '0').toUpperCase()).join('')}`;
+}
+
+function parseLineDashStyle(ln) {
+  const prstDash = ln?.['a:prstDash']?.['@_val'];
+  if (prstDash === 'dash' || prstDash === 'lgDash') return 'dashed';
+  if (prstDash === 'dot' || prstDash === 'sysDot') return 'dotted';
+  return 'solid';
+}
+
+function parseLineEndType(ln, key) {
+  const type = ln?.[key]?.['@_type'];
+  return type && type !== 'none' ? String(type) : undefined;
+}
+
 // ── Theme parsing ────────────────────────────────────────────────────────────
 
 function parseTheme(xmlStr, parser) {
-  if (!xmlStr) return { colours: {}, defaultFont: undefined };
+  if (!xmlStr) return { colours: {}, defaultFont: undefined, lineStyles: [] };
   const doc = parser.parse(xmlStr);
   const theme = doc?.['a:theme'];
   const elements = theme?.['a:themeElements'];
@@ -148,7 +207,12 @@ function parseTheme(xmlStr, parser) {
   const minorFont = fontScheme?.['a:minorFont']?.['a:latin']?.['@_typeface'];
   defaultFont = minorFont || majorFont || undefined;
 
-  return { colours, defaultFont };
+  const lineStyles = asArray(elements?.['a:fmtScheme']?.['a:lnStyleLst']?.['a:ln']).map((ln) => ({
+    width: ln?.['@_w'] ? emuToPt(ln['@_w']) : undefined,
+    style: parseLineDashStyle(ln),
+  }));
+
+  return { colours, defaultFont, lineStyles };
 }
 
 // ── Relationship parsing ─────────────────────────────────────────────────────
@@ -209,7 +273,7 @@ function parseFill(spPr, slideRels, themeColours) {
   // Image fill (blipFill on the shape properties)
   const blipFill = spPr['a:blipFill'];
   if (blipFill) {
-    const embed = blipFill?.['a:blip']?.['@_r:embed'];
+    const embed = extractBlipEmbed(blipFill?.['a:blip']);
     if (embed && slideRels[embed]) {
       return { type: 'image', imageTarget: slideRels[embed].target };
     }
@@ -221,76 +285,127 @@ function parseFill(spPr, slideRels, themeColours) {
   // Gradient fill (simplified — take first and last stops)
   const gradFill = spPr['a:gradFill'];
   if (gradFill) {
-    const gsLst = gradFill['a:gsLst']?.['a:gs'];
-    if (gsLst) {
-      const list = Array.isArray(gsLst) ? gsLst : [gsLst];
-      const stops = list.map((gs) => ({
-        position: Number(gs['@_pos'] || 0) / 1000, // OOXML positions are in 1/1000ths of %
-        colour: extractColour(gs, themeColours) || '#000000',
-      }));
-      if (stops.length) return { type: 'gradient', gradientStops: stops };
+    const stops = parseGradientStops(gradFill, themeColours);
+    if (stops.length) {
+      return {
+        type: 'gradient',
+        gradientStops: stops,
+        gradientAngle: parseGradientAngle(gradFill),
+      };
     }
   }
 
   return undefined;
 }
 
-function extractColour(node, themeColours) {
+function parseGradientAngle(gradFill) {
+  const rawAngle = gradFill?.['a:lin']?.['@_ang'];
+  return rawAngle !== undefined
+    ? (((Number(rawAngle) / 60000 + 90) % 360) + 360) % 360
+    : undefined;
+}
+
+function extractColourStop(node, themeColours) {
   if (!node) return undefined;
+
   const srgb = node['a:srgbClr'];
-  if (srgb) return normColour(srgb['@_val']);
+  if (srgb) {
+    return {
+      colour: applyColourTransforms(normColour(srgb['@_val']), srgb),
+      opacity: srgb['a:alpha']?.['@_val'] !== undefined ? Number(srgb['a:alpha']['@_val']) / 100000 : undefined,
+    };
+  }
 
   const schm = node['a:schemeClr'];
   if (schm) {
-    const val = schm['@_val'];
-    return resolveSchemeColour(val, themeColours);
+    return {
+      colour: applyColourTransforms(resolveSchemeColour(schm['@_val'], themeColours), schm),
+      opacity: schm['a:alpha']?.['@_val'] !== undefined ? Number(schm['a:alpha']['@_val']) / 100000 : undefined,
+    };
   }
 
   return undefined;
 }
 
+function parseGradientStops(gradFill, themeColours) {
+  const gsLst = gradFill?.['a:gsLst']?.['a:gs'];
+  if (!gsLst) return [];
+  const list = Array.isArray(gsLst) ? gsLst : [gsLst];
+  return list
+    .map((gs) => {
+      const colourStop = extractColourStop(gs, themeColours);
+      if (!colourStop?.colour) return undefined;
+      return {
+        position: Number(gs['@_pos'] || 0) / 1000,
+        colour: colourStop.colour,
+        opacity: colourStop.opacity,
+      };
+    })
+    .filter(Boolean);
+}
+
+function extractColour(node, themeColours) {
+  return extractColourStop(node, themeColours)?.colour;
+}
+
 // ── Border parsing ───────────────────────────────────────────────────────────
 
-function parseBorder(spPr, themeColours) {
+function parseBorder(spPr, themeColours, shapeStyle, themeLineStyles) {
   const ln = spPr?.['a:ln'];
   if (!ln) return undefined;
   if (ln['a:noFill'] !== undefined) return undefined;
 
-  const solidFill = ln['a:solidFill'];
-  if (!solidFill) return undefined;
+  const lineStyleIndex = Number(shapeStyle?.['a:lnRef']?.['@_idx'] || 0);
+  const inheritedLineStyle = Number.isFinite(lineStyleIndex) && lineStyleIndex > 0
+    ? themeLineStyles?.[lineStyleIndex - 1]
+    : undefined;
 
   const widthEmu = Number(ln['@_w'] || 0);
-  if (!widthEmu) return undefined;
-  const widthPt = emuToPt(widthEmu);
+  const widthPt = widthEmu ? emuToPt(widthEmu) : inheritedLineStyle?.width;
+  if (!widthPt) return undefined;
 
-  const colour = extractColour(solidFill, themeColours);
-  if (!colour) return undefined;
+  const style = ln['a:prstDash']?.['@_val'] ? parseLineDashStyle(ln) : inheritedLineStyle?.style || 'solid';
 
-  const prstDash = ln['a:prstDash']?.['@_val'];
-  let style = 'solid';
-  if (prstDash === 'dash' || prstDash === 'lgDash') style = 'dashed';
-  if (prstDash === 'dot' || prstDash === 'sysDot') style = 'dotted';
+  const solidFill = ln['a:solidFill'];
+  if (solidFill) {
+    const colour = extractColour(solidFill, themeColours);
+    if (colour) return { width: widthPt, colour, style };
+  }
 
-  return { width: widthPt, colour, style };
+  const gradientStops = parseGradientStops(ln['a:gradFill'], themeColours);
+  if (gradientStops.length) {
+    return {
+      width: widthPt,
+      style,
+      gradientStops,
+      gradientAngle: parseGradientAngle(ln['a:gradFill']),
+    };
+  }
+
+  return undefined;
 }
 
 // ── Text parsing ─────────────────────────────────────────────────────────────
 
-function parseRunStyleDefaults(rPr, themeColours, defaultFont) {
+function parseRunStyleDefaults(rPr, themeColours, defaultFont, options = {}) {
   const runDefaults = {};
-  if (!rPr) {
-    if (defaultFont) runDefaults.fontFamily = defaultFont;
-    return runDefaults;
-  }
+  if (!rPr) return runDefaults;
+  const normaliseMissingEmphasis = options.normaliseMissingEmphasis === true;
 
   if (rPr['@_b'] !== undefined) {
     runDefaults.bold = rPr['@_b'] === '1' || rPr['@_b'] === 'true';
+  } else if (normaliseMissingEmphasis) {
+    runDefaults.bold = false;
   }
   if (rPr['@_i'] !== undefined) {
     runDefaults.italic = rPr['@_i'] === '1' || rPr['@_i'] === 'true';
+  } else if (normaliseMissingEmphasis) {
+    runDefaults.italic = false;
   }
   if (rPr['@_u'] !== undefined) {
     runDefaults.underline = rPr['@_u'] !== 'none';
+  } else if (normaliseMissingEmphasis) {
+    runDefaults.underline = false;
   }
 
   const sz = rPr['@_sz'];
@@ -298,7 +413,6 @@ function parseRunStyleDefaults(rPr, themeColours, defaultFont) {
 
   const typeface = rPr['a:latin']?.['@_typeface'];
   if (typeface) runDefaults.fontFamily = typeface;
-  else if (defaultFont) runDefaults.fontFamily = defaultFont;
 
   const solidFill = rPr['a:solidFill'];
   if (solidFill) {
@@ -336,6 +450,17 @@ function applyRunDefaults(run, defaults, defaultFont) {
   return merged;
 }
 
+function applyDefaultFontToParagraphs(paragraphs, defaultFont) {
+  if (!paragraphs?.length || !defaultFont) return paragraphs;
+
+  return paragraphs.map((paragraph) => ({
+    ...paragraph,
+    runs: (paragraph.runs || []).map((run) =>
+      run.fontFamily === undefined ? { ...run, fontFamily: defaultFont } : run,
+    ),
+  }));
+}
+
 function parseParagraphDefaults(pPrNode, themeColours, defaultFont, level) {
   if (!pPrNode) return undefined;
 
@@ -357,9 +482,16 @@ function parseParagraphDefaults(pPrNode, themeColours, defaultFont, level) {
     defaults.bulletType = 'none';
   }
 
+  const lineSpacingPercent = Number(pPrNode['a:lnSpc']?.['a:spcPct']?.['@_val']);
+  if (Number.isFinite(lineSpacingPercent) && lineSpacingPercent > 0) {
+    defaults.lineSpacing = lineSpacingPercent / 100000;
+  }
+
   const runDefaults = mergeRunDefaults(
     parseRunStyleDefaults(pPrNode['a:endParaRPr'], themeColours, defaultFont),
-    parseRunStyleDefaults(pPrNode['a:defRPr'], themeColours, defaultFont),
+    parseRunStyleDefaults(pPrNode['a:defRPr'], themeColours, defaultFont, {
+      normaliseMissingEmphasis: true,
+    }),
   );
   if (runDefaults) defaults.runDefaults = runDefaults;
 
@@ -372,6 +504,7 @@ function mergeParagraphDefaults(base, override) {
     alignment: pickDefined(override?.alignment, base?.alignment),
     bulletType: pickDefined(override?.bulletType, base?.bulletType),
     bulletChar: pickDefined(override?.bulletChar, base?.bulletChar),
+    lineSpacing: pickDefined(override?.lineSpacing, base?.lineSpacing),
     level: pickDefined(override?.level, base?.level),
     runDefaults: mergeRunDefaults(base?.runDefaults, override?.runDefaults),
   };
@@ -451,6 +584,16 @@ function getPlaceholderInfo(node) {
   };
 }
 
+function areCompatiblePlaceholderTypes(sourceType, candidateType) {
+  if (sourceType === candidateType) return true;
+
+  const titleTypes = new Set(['title', 'ctrTitle']);
+  if (titleTypes.has(sourceType) && titleTypes.has(candidateType)) return true;
+
+  const compatibleBodyTypes = new Set(['body', 'obj', 'subTitle']);
+  return compatibleBodyTypes.has(sourceType) && compatibleBodyTypes.has(candidateType);
+}
+
 function scorePlaceholderMatch(source, candidate) {
   if (!source || !candidate) return -1;
 
@@ -467,8 +610,7 @@ function scorePlaceholderMatch(source, candidate) {
     if (source.type === candidate.type) {
       score += 8;
     } else if (source.type && candidate.type) {
-      const compatibleBodyTypes = new Set(['body', 'obj', 'subTitle']);
-      if (compatibleBodyTypes.has(source.type) && compatibleBodyTypes.has(candidate.type)) {
+      if (areCompatiblePlaceholderTypes(source.type, candidate.type)) {
         score += 3;
       } else {
         return -1;
@@ -544,6 +686,7 @@ function mergeParagraphsFromTemplate(paragraphs, templateParagraphs, masterTextS
             alignment: templateParagraph.alignment,
             bulletType: templateParagraph.bulletType,
             bulletChar: templateParagraph.bulletChar,
+            lineSpacing: templateParagraph.lineSpacing,
             level: templateParagraph.level,
             runDefaults: getTemplateRunDefaults(templateParagraphs, index),
           }
@@ -555,8 +698,9 @@ function mergeParagraphsFromTemplate(paragraphs, templateParagraphs, masterTextS
       alignment: pickDefined(paragraph.alignment, paragraphDefaults?.alignment),
       bulletType: pickDefined(paragraph.bulletType, paragraphDefaults?.bulletType),
       bulletChar: pickDefined(paragraph.bulletChar, paragraphDefaults?.bulletChar),
+      lineSpacing: pickDefined(paragraph.lineSpacing, paragraphDefaults?.lineSpacing),
       level: pickDefined(paragraph.level, paragraphDefaults?.level, 0),
-      runs: (paragraph.runs || []).map((run) => applyRunDefaults(run, paragraphDefaults?.runDefaults, defaultFont)),
+      runs: (paragraph.runs || []).map((run) => applyRunDefaults(run, paragraphDefaults?.runDefaults)),
     };
   });
 }
@@ -578,9 +722,10 @@ function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles) {
       parseParagraphDefaults(pPr, themeColours, defaultFont, level),
     );
 
-    let alignment = paragraphDefaults?.alignment || 'left';
-    let bulletType = paragraphDefaults?.bulletType || 'none';
+    let alignment = paragraphDefaults?.alignment;
+    let bulletType = paragraphDefaults?.bulletType;
     let bulletChar = paragraphDefaults?.bulletChar;
+    let lineSpacing = paragraphDefaults?.lineSpacing;
 
     const runs = [];
     const rList = p['a:r'];
@@ -602,7 +747,7 @@ function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles) {
         const rPr = r['a:rPr'];
         const text = r['a:t'] != null ? String(r['a:t']) : '';
         const runDefaults = mergeRunDefaults(paragraphRunDefaults, parseRunStyleDefaults(rPr, themeColours, defaultFont));
-        runs.push(applyRunDefaults({ text }, runDefaults, defaultFont));
+        runs.push(applyRunDefaults({ text }, runDefaults));
       }
     }
 
@@ -612,7 +757,7 @@ function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles) {
         const rPr = fld['a:rPr'];
         const text = fld['a:t'] != null ? String(fld['a:t']) : '';
         const runDefaults = mergeRunDefaults(paragraphRunDefaults, parseRunStyleDefaults(rPr, themeColours, defaultFont));
-        runs.push(applyRunDefaults({ text }, runDefaults, defaultFont));
+        runs.push(applyRunDefaults({ text }, runDefaults));
       }
     }
 
@@ -627,10 +772,10 @@ function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles) {
 
     // If no runs but has endParaRPr, it's an empty paragraph (still emit it for spacing)
     if (runs.length === 0) {
-      runs.push(applyRunDefaults({ text: '' }, emptyParagraphRunDefaults, defaultFont));
+      runs.push(applyRunDefaults({ text: '' }, emptyParagraphRunDefaults));
     }
 
-    paragraphs.push({ runs, alignment, bulletType, bulletChar, level, animationGroup: 0 });
+    paragraphs.push({ runs, alignment, bulletType, bulletChar, lineSpacing, level, animationGroup: 0 });
   }
 
   return paragraphs;
@@ -638,7 +783,7 @@ function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles) {
 
 // ── Shape parsing ────────────────────────────────────────────────────────────
 
-function parseShapeTransform(spNode) {
+function parseShapeTransformRaw(spNode) {
   // Try xfrm in spPr first, then in grpSpPr
   const xfrm =
     spNode?.['p:spPr']?.['a:xfrm'] ||
@@ -652,10 +797,10 @@ function parseShapeTransform(spNode) {
     const ext = spNode?.['p:spPr']?.['a:ext'];
     if (off || ext) {
       return {
-        x: emuToPx(off?.['@_x']),
-        y: emuToPx(off?.['@_y']),
-        width: emuToPx(ext?.['@_cx']),
-        height: emuToPx(ext?.['@_cy']),
+        x: Number(off?.['@_x'] || 0),
+        y: Number(off?.['@_y'] || 0),
+        width: Number(ext?.['@_cx'] || 0),
+        height: Number(ext?.['@_cy'] || 0),
         rotation: 0,
       };
     }
@@ -667,11 +812,21 @@ function parseShapeTransform(spNode) {
   const rot = Number(xfrm['@_rot'] || 0) / 60000; // 60000ths of a degree → degrees
 
   return {
-    x: emuToPx(off?.['@_x']),
-    y: emuToPx(off?.['@_y']),
-    width: emuToPx(ext?.['@_cx']),
-    height: emuToPx(ext?.['@_cy']),
+    x: Number(off?.['@_x'] || 0),
+    y: Number(off?.['@_y'] || 0),
+    width: Number(ext?.['@_cx'] || 0),
+    height: Number(ext?.['@_cy'] || 0),
     rotation: rot,
+  };
+}
+
+function transformToPx(transform) {
+  return {
+    x: emuToPx(transform.x),
+    y: emuToPx(transform.y),
+    width: emuToPx(transform.width),
+    height: emuToPx(transform.height),
+    rotation: transform.rotation || 0,
   };
 }
 
@@ -682,10 +837,10 @@ function applyGroupTransform(transform, groupContext) {
   const scaleY = groupContext.childHeight ? groupContext.height / groupContext.childHeight : 1;
 
   return {
-    x: Math.round(groupContext.x + (transform.x - groupContext.childX) * scaleX),
-    y: Math.round(groupContext.y + (transform.y - groupContext.childY) * scaleY),
-    width: Math.round(transform.width * scaleX),
-    height: Math.round(transform.height * scaleY),
+    x: groupContext.x + (transform.x - groupContext.childX) * scaleX,
+    y: groupContext.y + (transform.y - groupContext.childY) * scaleY,
+    width: transform.width * scaleX,
+    height: transform.height * scaleY,
     rotation: (transform.rotation || 0) + (groupContext.rotation || 0),
   };
 }
@@ -695,14 +850,14 @@ function parseGroupContext(grpNode, parentGroupContext) {
   if (!xfrm) return parentGroupContext;
 
   const ownContext = {
-    x: emuToPx(xfrm?.['a:off']?.['@_x']),
-    y: emuToPx(xfrm?.['a:off']?.['@_y']),
-    width: emuToPx(xfrm?.['a:ext']?.['@_cx']),
-    height: emuToPx(xfrm?.['a:ext']?.['@_cy']),
-    childX: emuToPx(xfrm?.['a:chOff']?.['@_x']),
-    childY: emuToPx(xfrm?.['a:chOff']?.['@_y']),
-    childWidth: emuToPx(xfrm?.['a:chExt']?.['@_cx']) || emuToPx(xfrm?.['a:ext']?.['@_cx']),
-    childHeight: emuToPx(xfrm?.['a:chExt']?.['@_cy']) || emuToPx(xfrm?.['a:ext']?.['@_cy']),
+    x: Number(xfrm?.['a:off']?.['@_x'] || 0),
+    y: Number(xfrm?.['a:off']?.['@_y'] || 0),
+    width: Number(xfrm?.['a:ext']?.['@_cx'] || 0),
+    height: Number(xfrm?.['a:ext']?.['@_cy'] || 0),
+    childX: Number(xfrm?.['a:chOff']?.['@_x'] || 0),
+    childY: Number(xfrm?.['a:chOff']?.['@_y'] || 0),
+    childWidth: Number(xfrm?.['a:chExt']?.['@_cx'] || xfrm?.['a:ext']?.['@_cx'] || 0),
+    childHeight: Number(xfrm?.['a:chExt']?.['@_cy'] || xfrm?.['a:ext']?.['@_cy'] || 0),
     rotation: Number(xfrm?.['@_rot'] || 0) / 60000,
   };
 
@@ -726,11 +881,12 @@ function getGroupNodeId(grpNode) {
 }
 
 function getPresetGeometry(spPr) {
+  if (spPr?.['a:custGeom']) return 'freeform';
   const prst = spPr?.['a:prstGeom']?.['@_prst'];
   if (!prst) return 'rect';
   if (prst === 'ellipse') return 'ellipse';
   if (prst === 'roundRect') return 'roundRect';
-  if (prst === 'line') return 'line';
+  if (prst === 'line' || prst.startsWith('straightConnector')) return 'line';
   return 'rect';
 }
 
@@ -756,7 +912,103 @@ function parseImageCrop(blipFill) {
   return Object.values(crop).some((value) => value > 0) ? crop : undefined;
 }
 
-function parseShape(spNode, slideRels, themeColours, defaultFont, groupContext, ancestorGroupIds = []) {
+function parseTextFitScale(bodyPr) {
+  const fontScale = Number(bodyPr?.['a:normAutofit']?.['@_fontScale']);
+  if (!Number.isFinite(fontScale) || fontScale <= 0) return undefined;
+  const scale = fontScale / 100000;
+  return scale > 0 && scale < 1 ? scale : undefined;
+}
+
+function parseTextInsets(bodyPr) {
+  if (!bodyPr) return undefined;
+
+  const mapping = [
+    ['@_lIns', 'left'],
+    ['@_tIns', 'top'],
+    ['@_rIns', 'right'],
+    ['@_bIns', 'bottom'],
+  ];
+
+  let hasExplicitInsets = false;
+  const insets = {};
+
+  for (const [attr, key] of mapping) {
+    if (bodyPr[attr] === undefined) continue;
+    insets[key] = emuToPx(bodyPr[attr]);
+    hasExplicitInsets = true;
+  }
+
+  return hasExplicitInsets ? insets : undefined;
+}
+
+function extractBlipEmbed(blip) {
+  if (!blip) return undefined;
+
+  if (blip['@_r:embed']) return blip['@_r:embed'];
+
+  for (const ext of asArray(blip['a:extLst']?.['a:ext'])) {
+    const svgBlip = ext?.['asvg:svgBlip'];
+    if (svgBlip?.['@_r:embed']) return svgBlip['@_r:embed'];
+  }
+
+  return undefined;
+}
+
+function parseCustomGeometry(spPr) {
+  const custGeom = spPr?.['a:custGeom'];
+  if (!custGeom) return undefined;
+
+  const pathNodes = asArray(custGeom?.['a:pathLst']?.['a:path']);
+  if (!pathNodes.length) return undefined;
+
+  const segments = [];
+  let svgViewBoxWidth = 0;
+  let svgViewBoxHeight = 0;
+
+  for (const pathNode of pathNodes) {
+    if (!svgViewBoxWidth) svgViewBoxWidth = Number(pathNode?.['@_w'] || 0);
+    if (!svgViewBoxHeight) svgViewBoxHeight = Number(pathNode?.['@_h'] || 0);
+
+    for (const moveTo of asArray(pathNode?.['a:moveTo'])) {
+      const point = moveTo?.['a:pt'];
+      if (point) segments.push(`M ${Number(point['@_x'] || 0)} ${Number(point['@_y'] || 0)}`);
+    }
+
+    for (const lineTo of asArray(pathNode?.['a:lnTo'])) {
+      const point = lineTo?.['a:pt'];
+      if (point) segments.push(`L ${Number(point['@_x'] || 0)} ${Number(point['@_y'] || 0)}`);
+    }
+
+    for (const cubicTo of asArray(pathNode?.['a:cubicBezTo'])) {
+      const points = asArray(cubicTo?.['a:pt']);
+      if (points.length === 3) {
+        segments.push(
+          `C ${Number(points[0]['@_x'] || 0)} ${Number(points[0]['@_y'] || 0)} ${Number(points[1]['@_x'] || 0)} ${Number(points[1]['@_y'] || 0)} ${Number(points[2]['@_x'] || 0)} ${Number(points[2]['@_y'] || 0)}`,
+        );
+      }
+    }
+
+    for (const quadTo of asArray(pathNode?.['a:quadBezTo'])) {
+      const points = asArray(quadTo?.['a:pt']);
+      if (points.length === 2) {
+        segments.push(
+          `Q ${Number(points[0]['@_x'] || 0)} ${Number(points[0]['@_y'] || 0)} ${Number(points[1]['@_x'] || 0)} ${Number(points[1]['@_y'] || 0)}`,
+        );
+      }
+    }
+
+    if (pathNode?.['a:close'] !== undefined) segments.push('Z');
+  }
+
+  if (!segments.length) return undefined;
+  return {
+    svgPath: segments.join(' '),
+    svgViewBoxWidth: svgViewBoxWidth || undefined,
+    svgViewBoxHeight: svgViewBoxHeight || undefined,
+  };
+}
+
+function parseShape(spNode, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds = []) {
   const nvSpPr = spNode['p:nvSpPr'] || spNode['p:nvCxnSpPr'];
   const cNvPr = nvSpPr?.['p:cNvPr'];
   const id = String(cNvPr?.['@_id'] || '');
@@ -764,10 +1016,13 @@ function parseShape(spNode, slideRels, themeColours, defaultFont, groupContext, 
   const placeholder = getPlaceholderInfo(spNode);
 
   const spPr = spNode['p:spPr'];
-  const transform = applyGroupTransform(parseShapeTransform(spNode), groupContext);
+  const transform = transformToPx(applyGroupTransform(parseShapeTransformRaw(spNode), groupContext));
+  const customGeometry = parseCustomGeometry(spPr);
   const shapeType = getPresetGeometry(spPr);
   const fill = parseFill(spPr, slideRels, themeColours);
-  const border = parseBorder(spPr, themeColours);
+  const border = parseBorder(spPr, themeColours, spNode?.['p:style'], themeLineStyles);
+  const lineHead = parseLineEndType(spPr?.['a:ln'], 'a:headEnd');
+  const lineTail = parseLineEndType(spPr?.['a:ln'], 'a:tailEnd');
   const flip = parseFlipFlags(spPr?.['a:xfrm']);
 
   const txBody = spNode['p:txBody'];
@@ -782,6 +1037,8 @@ function parseShape(spNode, slideRels, themeColours, defaultFont, groupContext, 
     else if (anchor === 'b') verticalAlign = 'bottom';
     else if (anchor === 't') verticalAlign = 'top';
   }
+  const textFitScale = parseTextFitScale(bodyPr);
+  const textInsets = parseTextInsets(bodyPr);
 
   let cornerRadius;
   if (shapeType === 'roundRect') {
@@ -798,12 +1055,19 @@ function parseShape(spNode, slideRels, themeColours, defaultFont, groupContext, 
     border,
     paragraphs: paragraphs.length ? paragraphs : undefined,
     verticalAlign,
+    textFitScale,
+    textInsets,
     cornerRadius,
+    lineHead,
+    lineTail,
     placeholder,
     sourceShapeId: id,
     ancestorGroupIds,
     flipH: flip.flipH,
     flipV: flip.flipV,
+    svgPath: customGeometry?.svgPath,
+    svgViewBoxWidth: customGeometry?.svgViewBoxWidth,
+    svgViewBoxHeight: customGeometry?.svgViewBoxHeight,
     animationGroup: 0, // default: always visible; may be overridden by animation parsing
     animationEffect: 'appear',
   };
@@ -825,7 +1089,14 @@ function inheritShapeFromTemplate(shape, template, masterTextStyles, defaultFont
     if (mergedShape.fill === undefined && sourceTemplate.fill !== undefined) mergedShape.fill = sourceTemplate.fill;
     if (mergedShape.border === undefined && sourceTemplate.border !== undefined) mergedShape.border = sourceTemplate.border;
     if (mergedShape.verticalAlign === undefined && sourceTemplate.verticalAlign !== undefined) mergedShape.verticalAlign = sourceTemplate.verticalAlign;
+    if (mergedShape.textFitScale === undefined && sourceTemplate.textFitScale !== undefined) mergedShape.textFitScale = sourceTemplate.textFitScale;
+    if (mergedShape.textInsets === undefined && sourceTemplate.textInsets !== undefined) mergedShape.textInsets = sourceTemplate.textInsets;
+    if (mergedShape.lineHead === undefined && sourceTemplate.lineHead !== undefined) mergedShape.lineHead = sourceTemplate.lineHead;
+    if (mergedShape.lineTail === undefined && sourceTemplate.lineTail !== undefined) mergedShape.lineTail = sourceTemplate.lineTail;
     if (mergedShape.cornerRadius === undefined && sourceTemplate.cornerRadius !== undefined) mergedShape.cornerRadius = sourceTemplate.cornerRadius;
+    if (mergedShape.svgPath === undefined && sourceTemplate.svgPath !== undefined) mergedShape.svgPath = sourceTemplate.svgPath;
+    if (mergedShape.svgViewBoxWidth === undefined && sourceTemplate.svgViewBoxWidth !== undefined) mergedShape.svgViewBoxWidth = sourceTemplate.svgViewBoxWidth;
+    if (mergedShape.svgViewBoxHeight === undefined && sourceTemplate.svgViewBoxHeight !== undefined) mergedShape.svgViewBoxHeight = sourceTemplate.svgViewBoxHeight;
   }
 
   if (mergedShape.paragraphs?.length) {
@@ -848,7 +1119,7 @@ function parsePicture(picNode, slideRels, themeColours, groupContext, ancestorGr
   const name = cNvPr?.['@_name'] || '';
 
   const blipFill = picNode['p:blipFill'];
-  const embed = blipFill?.['a:blip']?.['@_r:embed'];
+  const embed = extractBlipEmbed(blipFill?.['a:blip']);
   let imageTarget;
   if (embed && slideRels[embed]) {
     imageTarget = slideRels[embed].target;
@@ -856,18 +1127,9 @@ function parsePicture(picNode, slideRels, themeColours, groupContext, ancestorGr
 
   const spPr = picNode['p:spPr'];
   const xfrm = spPr?.['a:xfrm'];
-  const off = xfrm?.['a:off'];
-  const ext = xfrm?.['a:ext'];
-  const rot = Number(xfrm?.['@_rot'] || 0) / 60000;
   const flip = parseFlipFlags(xfrm);
   const imageCrop = parseImageCrop(blipFill);
-  const transform = applyGroupTransform({
-    x: emuToPx(off?.['@_x']),
-    y: emuToPx(off?.['@_y']),
-    width: emuToPx(ext?.['@_cx']),
-    height: emuToPx(ext?.['@_cy']),
-    rotation: rot,
-  }, groupContext);
+  const transform = transformToPx(applyGroupTransform(parseShapeTransformRaw(picNode), groupContext));
 
   return {
     id: `pic-${id}`,
@@ -885,7 +1147,7 @@ function parsePicture(picNode, slideRels, themeColours, groupContext, ancestorGr
   };
 }
 
-function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, groupContext, ancestorGroupIds = []) {
+function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds = []) {
   const shapes = [];
   if (!spTree) return shapes;
 
@@ -893,7 +1155,7 @@ function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, grou
   if (spNodes) {
     const list = Array.isArray(spNodes) ? spNodes : [spNodes];
     for (const sp of list) {
-      shapes.push(parseShape(sp, slideRels, themeColours, defaultFont, groupContext, ancestorGroupIds));
+      shapes.push(parseShape(sp, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds));
     }
   }
 
@@ -909,7 +1171,7 @@ function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, grou
   if (cxnSpNodes) {
     const list = Array.isArray(cxnSpNodes) ? cxnSpNodes : [cxnSpNodes];
     for (const cxn of list) {
-      shapes.push(parseShape(cxn, slideRels, themeColours, defaultFont, groupContext, ancestorGroupIds));
+      shapes.push(parseShape(cxn, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds));
     }
   }
 
@@ -920,7 +1182,7 @@ function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, grou
       const groupId = getGroupNodeId(grp);
       const nextAncestorGroupIds = groupId ? [...ancestorGroupIds, groupId] : ancestorGroupIds;
       const nextGroupContext = parseGroupContext(grp, groupContext);
-      shapes.push(...collectDrawableNodes(grp, slideRels, themeColours, defaultFont, nextGroupContext, nextAncestorGroupIds));
+      shapes.push(...collectDrawableNodes(grp, slideRels, themeColours, defaultFont, themeLineStyles, nextGroupContext, nextAncestorGroupIds));
     }
   }
 
@@ -933,7 +1195,7 @@ function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, grou
     const choice = asArray(alternateContent?.['mc:Choice'])[0] || asArray(alternateContent?.Choice)[0];
     const drawableContainer = fallback || choice;
     if (drawableContainer) {
-      shapes.push(...collectDrawableNodes(drawableContainer, slideRels, themeColours, defaultFont, groupContext, ancestorGroupIds));
+      shapes.push(...collectDrawableNodes(drawableContainer, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds));
     }
   }
 
@@ -1199,12 +1461,12 @@ function parseSlideBackground(bgNode, slideRels, themeColours) {
  * Placeholder shapes are collected for inheritance only and are not rendered
  * directly, since PowerPoint/Keynote treat them as template slots.
  */
-function parseLayoutMasterShapes(spTree, rels, themeColours, defaultFont) {
+function parseLayoutMasterShapes(spTree, rels, themeColours, defaultFont, themeLineStyles) {
   const shapes = [];
   const placeholders = [];
   if (!spTree) return { shapes, placeholders };
 
-  const drawableNodes = collectDrawableNodes(spTree, rels, themeColours, defaultFont);
+  const drawableNodes = collectDrawableNodes(spTree, rels, themeColours, defaultFont, themeLineStyles);
   for (const shape of drawableNodes) {
     if (shape.placeholder) {
       placeholders.push(shape);
@@ -1301,7 +1563,7 @@ async function parsePptx(filePath: string, deckId: string, getDeckDir: (id: stri
   const presRels = parseRels(presRelsXml, parser);
 
   // ── Read theme ──
-  let themeData = { colours: {}, defaultFont: undefined };
+  let themeData = { colours: {}, defaultFont: undefined, lineStyles: [] };
   try {
     const themeRel = Object.values(presRels).find((r) => r.type.includes('theme'));
     if (themeRel) {
@@ -1455,7 +1717,13 @@ async function parsePptx(filePath: string, deckId: string, getDeckDir: (id: stri
 
       // Layout shapes (using layout rels for image resolution)
       const spTree = cSld?.['p:spTree'];
-      const { shapes, placeholders } = parseLayoutMasterShapes(spTree, layoutRels, themeData.colours, themeData.defaultFont);
+      const { shapes, placeholders } = parseLayoutMasterShapes(
+        spTree,
+        layoutRels,
+        themeData.colours,
+        themeData.defaultFont,
+        themeData.lineStyles,
+      );
       extractMediaFromShapes(shapes, layoutDir);
       extractMediaFromShapes(placeholders, layoutDir);
 
@@ -1501,7 +1769,13 @@ async function parsePptx(filePath: string, deckId: string, getDeckDir: (id: stri
 
       // Master shapes
       const spTree = cSld?.['p:spTree'];
-      const { shapes, placeholders } = parseLayoutMasterShapes(spTree, masterRels, themeData.colours, themeData.defaultFont);
+      const { shapes, placeholders } = parseLayoutMasterShapes(
+        spTree,
+        masterRels,
+        themeData.colours,
+        themeData.defaultFont,
+        themeData.lineStyles,
+      );
       extractMediaFromShapes(shapes, masterDir);
       extractMediaFromShapes(placeholders, masterDir);
 
@@ -1570,15 +1844,21 @@ async function parsePptx(filePath: string, deckId: string, getDeckDir: (id: stri
 
     // ── Shapes from the slide itself ──
     const spTree = cSld?.['p:spTree'];
-    const rawSlideShapes = collectDrawableNodes(spTree, slideRels, themeData.colours, themeData.defaultFont);
+    const rawSlideShapes = collectDrawableNodes(
+      spTree,
+      slideRels,
+      themeData.colours,
+      themeData.defaultFont,
+      themeData.lineStyles,
+    );
     const slideShapes = rawSlideShapes
       .map((shape) => {
         if (!shape.placeholder) return shape;
         const masterTemplate = findPlaceholderTemplate(shape, masterData.placeholders);
         const layoutTemplate = findPlaceholderTemplate(shape, layoutData.placeholders);
         return inheritShapeFromTemplate(
-          inheritShapeFromTemplate(shape, masterTemplate, masterData.textStyles, themeData.defaultFont),
-          layoutTemplate,
+          inheritShapeFromTemplate(shape, layoutTemplate, masterData.textStyles, themeData.defaultFont),
+          masterTemplate,
           masterData.textStyles,
           themeData.defaultFont,
         );
@@ -1635,6 +1915,12 @@ async function parsePptx(filePath: string, deckId: string, getDeckDir: (id: stri
       allShapes.push({ ...cloneValue(s), id: `layout-${s.id}-s${i}` });
     }
     allShapes.push(...slideShapes);
+
+    for (const shape of allShapes) {
+      if (shape.paragraphs?.length) {
+        shape.paragraphs = applyDefaultFontToParagraphs(shape.paragraphs, themeData.defaultFont);
+      }
+    }
 
     // ── Animations ──
     const timing = sld?.['p:timing'];
