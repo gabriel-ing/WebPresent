@@ -17,6 +17,11 @@ type ResolveSlideParams = {
   relativePath: string;
 };
 
+type PreviewSlideAsset = {
+  buffer: Uint8Array;
+  mimeType: string;
+};
+
 type ImportPptxParams = {
   deckId: string;
   filePath: string;
@@ -32,6 +37,7 @@ export type PresentApi = {
   pickSlideDirectory: () => Promise<string[]>;
   importSlides: (params: ImportSlidesParams) => Promise<SlideRef[]>;
   resolveSlideUrl: (params: ResolveSlideParams) => Promise<string | null>;
+  resolveSlidePreviewAsset: (params: ResolveSlideParams) => Promise<PreviewSlideAsset | null>;
   resolveSlideDataUrl: (params: ResolveSlideParams) => Promise<string | null>;
   pickPptxFile: () => Promise<string | null>;
   importPptx: (params: ImportPptxParams) => Promise<PptxDeckData>;

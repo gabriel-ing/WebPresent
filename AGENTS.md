@@ -102,12 +102,15 @@ These areas have already caused real regressions and should be treated carefully
 
 - Placeholder inheritance is split across slide, layout, and master. Do not simplify this casually.
 - Layouts can suppress inherited master shapes via `showMasterSp`. Honor that or duplicate graphics can appear.
+- XML draw order can cross node types such as `p:sp`, `p:pic`, `p:cxnSp`, and `p:grpSp`. If you flatten those in buckets instead of source order, labels can render underneath connectors or cards even when the text parsed correctly.
 - Some text content lives in `a:fld`, not just `a:r`.
+- Some layouts use repeated `a:br` runs inside a single paragraph to create intentional vertical gaps around nearby content. Compact browser paragraph defaults help tight labels, but they can also compress those spacer-heavy boxes if you do not validate them visually.
 - Some shapes live inside `mc:AlternateContent`. Ignoring fallback or choice blocks will drop content.
 - Image correctness depends on `a:srcRect` crop data and `flipH` / `flipV` transforms.
 - Animation ordering must prefer the main sequence and ignore interactive sequences for normal build order.
 - Paragraph builds are separate from whole-shape builds. A shape can appear on one click while later paragraphs reveal on later clicks.
 - Editor preview and presentation renderer should stay behaviorally aligned.
+- Standalone comparison artifacts and saved decks can both go stale after engine changes. Regenerate `/tmp/ready2026-slide*-render.html` outputs and reimport/save a fresh deck before trusting a visual diff.
 
 ## Current Known Issues
 
@@ -124,6 +127,12 @@ Do not assume these are fully resolved unless you verify them in the live app.
 
 Recent fixes added regression coverage for:
 
+- zero-height connector SVG boxes and marker clipping
+- compact default paragraph spacing for tight labels
+- ordered inline `a:r` / `a:fld` / `a:br` parsing
+- gradient-only borders on standard rectangle shapes
+- text-box overflow fitting in fullscreen and preview HTML
+- mixed node-type draw-order preservation
 - slide-number field extraction
 - cropped image rendering
 - paragraph build ordering
@@ -143,6 +152,13 @@ Before claiming a fix is done, prefer this verification set:
 
 If the task affects live presentation behavior, automated tests are not enough on their own. A manual Electron smoke test is the best follow-up when feasible.
 
+For slide-by-slide PDF comparison work:
+
+1. Rebuild the engine after parser or render-core edits.
+2. Regenerate any standalone `/tmp/ready2026-slide*-render.html` artifacts before comparing, because those files are only valid for the engine build that produced them.
+3. Compare against the correct animation state. For READY2026 PDF pages this is often the final visible build, not step `0`.
+4. If a screenshot looks faded or washed out right after reload, recapture after the slide settles before diagnosing opacity or colour bugs.
+
 ## Editing Guidance For Future Agents
 
 - Prefer minimal, surgical changes.
@@ -150,6 +166,7 @@ If the task affects live presentation behavior, automated tests are not enough o
 - If you update parser behavior, check whether `src/pptxRenderer.ts` and `electron/pptxPresentRenderer.cjs` must stay in sync.
 - If you add a bug fix, add or update a regression test first whenever practical.
 - Be careful with XML array handling. `fast-xml-parser` shape/timing structures are sensitive to `isArray` behavior.
+- Keep ordered-text parsing and ordered-draw flattening separate in the parser. Both matter, and fixing one does not automatically fix the other.
 
 ## Useful Fixtures
 

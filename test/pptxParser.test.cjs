@@ -433,6 +433,62 @@ test('parser preserves explicit bodyPr text insets on text boxes', async () => {
   }
 });
 
+test('parser preserves inline line-break positions within a paragraph', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'webpresent-pptx-synthetic-'));
+  const deckId = 'deck-test';
+  const getDeckDir = (id) => path.join(tempRoot, id);
+  const pptxPath = path.join(tempRoot, 'inline-line-breaks.pptx');
+
+  try {
+    await mkdir(getDeckDir(deckId), { recursive: true });
+    await createSyntheticPptx(pptxPath, {
+      extraSlideShapesXml: `      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="52" name="Line break textbox"/>
+          <p:cNvSpPr txBox="1"/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="1828800" y="1828800"/>
+            <a:ext cx="3657600" cy="914400"/>
+          </a:xfrm>
+          <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+          <a:noFill/>
+        </p:spPr>
+        <p:txBody>
+          <a:bodyPr/>
+          <a:lstStyle/>
+          <a:p>
+            <a:r>
+              <a:rPr lang="en-US" sz="2000" b="1"/>
+              <a:t>Multi-step workflows</a:t>
+            </a:r>
+            <a:br>
+              <a:rPr lang="en-US" sz="2000"/>
+            </a:br>
+            <a:r>
+              <a:rPr lang="en-US" sz="2000"/>
+              <a:t>(e.g. research → summarize)</a:t>
+            </a:r>
+          </a:p>
+        </p:txBody>
+      </p:sp>`,
+    });
+
+    const deck = await parsePptx(pptxPath, deckId, getDeckDir);
+    const textShape = deck.slides[0].shapes.find((shape) => shape.sourceShapeId === '52');
+
+    assert.ok(textShape, 'expected the line-break text box to be parsed');
+    assert.deepEqual(
+      textShape.paragraphs?.[0]?.runs?.map((run) => run.text),
+      ['Multi-step workflows', '\n', '(e.g. research → summarize)'],
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('parser maps straight connector arrows to line shapes with end markers', async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'webpresent-pptx-synthetic-'));
   const deckId = 'deck-test';
@@ -470,6 +526,68 @@ test('parser maps straight connector arrows to line shapes with end markers', as
     assert.equal(connector.lineTail, 'triangle');
     assert.equal(connector.flipV, true);
     assert.equal(connector.border?.colour, '#000000');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('parser preserves draw order across mixed shape node types', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'webpresent-pptx-synthetic-'));
+  const deckId = 'deck-test';
+  const getDeckDir = (id) => path.join(tempRoot, id);
+  const pptxPath = path.join(tempRoot, 'mixed-draw-order.pptx');
+
+  try {
+    await mkdir(getDeckDir(deckId), { recursive: true });
+    await createSyntheticPptx(pptxPath, {
+      extraSlideShapesXml: `      <p:cxnSp>
+        <p:nvCxnSpPr>
+          <p:cNvPr id="60" name="Connector under label"/>
+          <p:cNvCxnSpPr><a:cxnSpLocks/></p:cNvCxnSpPr>
+          <p:nvPr/>
+        </p:nvCxnSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="1828800" y="1828800"/>
+            <a:ext cx="3048000" cy="0"/>
+          </a:xfrm>
+          <a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>
+          <a:ln w="38100"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln>
+        </p:spPr>
+      </p:cxnSp>
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="61" name="Label above connector"/>
+          <p:cNvSpPr txBox="1"/>
+          <p:nvPr/>
+        </p:nvSpPr>
+        <p:spPr>
+          <a:xfrm>
+            <a:off x="2286000" y="1600200"/>
+            <a:ext cx="2286000" cy="457200"/>
+          </a:xfrm>
+          <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+          <a:noFill/>
+        </p:spPr>
+        <p:txBody>
+          <a:bodyPr/>
+          <a:lstStyle/>
+          <a:p>
+            <a:r>
+              <a:rPr lang="en-US" sz="2000"/>
+              <a:t>Visible label</a:t>
+            </a:r>
+          </a:p>
+        </p:txBody>
+      </p:sp>`,
+    });
+
+    const deck = await parsePptx(pptxPath, deckId, getDeckDir);
+    const orderedShapeIds = deck.slides[0].shapes
+      .filter((shape) => shape.sourceShapeId === '60' || shape.sourceShapeId === '61')
+      .map((shape) => shape.sourceShapeId);
+
+    assert.deepEqual(orderedShapeIds, ['60', '61']);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

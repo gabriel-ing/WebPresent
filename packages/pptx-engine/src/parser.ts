@@ -54,7 +54,19 @@ function hasAnyValue(obj) {
 
 // ── XML parser factory ───────────────────────────────────────────────────────
 
-function createXmlParser() {
+function createXmlParser(options = {}) {
+  if (options.preserveOrder) {
+    return new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '@_',
+      allowBooleanAttributes: true,
+      parseAttributeValue: false,
+      parseTagValue: false,
+      trimValues: false,
+      preserveOrder: true,
+    });
+  }
+
   return new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
@@ -95,6 +107,126 @@ function createXmlParser() {
       return alwaysArray.has(name);
     },
   });
+}
+
+function findOrderedChildNode(children, name) {
+  if (!Array.isArray(children)) return undefined;
+  return children.find((child) => child && typeof child === 'object' && Object.prototype.hasOwnProperty.call(child, name));
+}
+
+function findOrderedChild(children, name) {
+  return findOrderedChildNode(children, name)?.[name];
+}
+
+function getOrderedAttributes(children) {
+  if (!Array.isArray(children)) return undefined;
+  const match = children.find((child) => child && typeof child === 'object' && child[':@']);
+  return match?.[':@'];
+}
+
+function getOrderedDrawableId(children, nvName) {
+  const nvChildren = findOrderedChild(children, nvName);
+  const cNvPrNode = nvChildren ? findOrderedChildNode(nvChildren, 'p:cNvPr') : undefined;
+  const id = cNvPrNode?.[':@']?.['@_id'];
+  return id !== undefined ? String(id) : undefined;
+}
+
+function collectOrderedShapeMetadata(nodes, state = { textBodyMap: new Map(), drawableIds: [] }) {
+  if (!Array.isArray(nodes)) return map;
+
+  for (const node of nodes) {
+    if (!node || typeof node !== 'object') continue;
+
+    const shapeChildren = node['p:sp'] || node['p:cxnSp'];
+    if (shapeChildren) {
+      const id = node['p:sp']
+        ? getOrderedDrawableId(shapeChildren, 'p:nvSpPr')
+        : getOrderedDrawableId(shapeChildren, 'p:nvCxnSpPr');
+      const txBody = findOrderedChild(shapeChildren, 'p:txBody');
+      if (id) state.drawableIds.push(id);
+      if (id && txBody) state.textBodyMap.set(id, txBody);
+      collectOrderedShapeMetadata(shapeChildren, state);
+      continue;
+    }
+
+    const picChildren = node['p:pic'];
+    if (picChildren) {
+      const id = getOrderedDrawableId(picChildren, 'p:nvPicPr');
+      if (id) state.drawableIds.push(id);
+      collectOrderedShapeMetadata(picChildren, state);
+      continue;
+    }
+
+    const groupChildren = node['p:grpSp'];
+    if (groupChildren) {
+      collectOrderedShapeMetadata(groupChildren, state);
+      continue;
+    }
+
+    const alternateContentChildren =
+      node['mc:AlternateContent'] ||
+      node.AlternateContent ||
+      node['mc:Choice'] ||
+      node.Choice ||
+      node['mc:Fallback'] ||
+      node.Fallback;
+    if (alternateContentChildren) {
+      collectOrderedShapeMetadata(alternateContentChildren, state);
+      continue;
+    }
+
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) collectOrderedShapeMetadata(value, state);
+    }
+  }
+
+  return state;
+}
+
+function parseOrderedShapeMetadata(xml, orderedParser) {
+  if (!xml) return { orderedTextBodyMap: undefined, orderedDrawableIds: undefined };
+
+  try {
+    const { textBodyMap, drawableIds } = collectOrderedShapeMetadata(orderedParser.parse(xml));
+    return {
+      orderedTextBodyMap: textBodyMap.size ? textBodyMap : undefined,
+      orderedDrawableIds: drawableIds.length ? drawableIds : undefined,
+    };
+  } catch {
+    return { orderedTextBodyMap: undefined, orderedDrawableIds: undefined };
+  }
+}
+
+function sortShapesByDrawOrder(shapes, orderedDrawableIds) {
+  if (!Array.isArray(shapes) || !Array.isArray(orderedDrawableIds) || !orderedDrawableIds.length) {
+    return shapes;
+  }
+
+  const drawOrder = new Map();
+  orderedDrawableIds.forEach((id, index) => {
+    if (!drawOrder.has(id)) drawOrder.set(id, index);
+  });
+
+  return shapes
+    .map((shape, index) => ({
+      shape,
+      index,
+      order: drawOrder.get(String(shape?.sourceShapeId || '')),
+    }))
+    .sort((left, right) => {
+      const leftKnown = left.order !== undefined;
+      const rightKnown = right.order !== undefined;
+      if (leftKnown && rightKnown) return left.order - right.order || left.index - right.index;
+      if (leftKnown) return -1;
+      if (rightKnown) return 1;
+      return left.index - right.index;
+    })
+    .map(({ shape }) => shape);
+}
+
+function getOrderedParagraphNodes(orderedTxBody) {
+  if (!Array.isArray(orderedTxBody)) return [];
+  return orderedTxBody.filter((child) => child && typeof child === 'object' && child['a:p']).map((child) => child['a:p']);
 }
 
 // ── Colour helpers ───────────────────────────────────────────────────────────
@@ -705,7 +837,15 @@ function mergeParagraphsFromTemplate(paragraphs, templateParagraphs, masterTextS
   });
 }
 
-function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles) {
+function appendTextRun(runs, node, paragraphRunDefaults, themeColours, defaultFont) {
+  if (!node) return;
+  const rPr = node['a:rPr'];
+  const text = node['a:t'] != null ? String(node['a:t']) : '';
+  const runDefaults = mergeRunDefaults(paragraphRunDefaults, parseRunStyleDefaults(rPr, themeColours, defaultFont));
+  runs.push(applyRunDefaults({ text }, runDefaults));
+}
+
+function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles, orderedTxBody) {
   if (!txBody) return [];
   const paragraphs = [];
   const pList = txBody['a:p'];
@@ -713,8 +853,11 @@ function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles) {
   const pArray = Array.isArray(pList) ? pList : [pList];
   const localTextStyles = parseListStyleDefaults(txBody['a:lstStyle'], themeColours, defaultFont);
   const textStyleMap = mergeTextStyleMaps(inheritedTextStyles, localTextStyles);
+  const orderedParagraphs = getOrderedParagraphNodes(orderedTxBody);
 
-  for (const p of pArray) {
+  for (let paragraphIndex = 0; paragraphIndex < pArray.length; paragraphIndex++) {
+    const p = pArray[paragraphIndex];
+    const orderedParagraph = orderedParagraphs[paragraphIndex];
     const pPr = p['a:pPr'];
     const level = Number(pPr?.['@_lvl'] || 0);
     const paragraphDefaults = mergeParagraphDefaults(
@@ -728,8 +871,12 @@ function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles) {
     let lineSpacing = paragraphDefaults?.lineSpacing;
 
     const runs = [];
-    const rList = p['a:r'];
-    const fldList = p['a:fld'];
+    const rArray = asArray(p['a:r']);
+    const fldArray = asArray(p['a:fld']);
+    const brArray = asArray(p['a:br']);
+    let runIndex = 0;
+    let fieldIndex = 0;
+    let breakIndex = 0;
 
     const paragraphRunDefaults = mergeRunDefaults(
       paragraphDefaults?.runDefaults,
@@ -741,33 +888,38 @@ function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles) {
       parseRunStyleDefaults(p['a:endParaRPr'], themeColours, defaultFont),
     );
 
-    if (rList) {
-      const rArray = Array.isArray(rList) ? rList : [rList];
-      for (const r of rArray) {
-        const rPr = r['a:rPr'];
-        const text = r['a:t'] != null ? String(r['a:t']) : '';
-        const runDefaults = mergeRunDefaults(paragraphRunDefaults, parseRunStyleDefaults(rPr, themeColours, defaultFont));
-        runs.push(applyRunDefaults({ text }, runDefaults));
+    if (orderedParagraph?.length) {
+      for (const child of orderedParagraph) {
+        if (child['a:r']) {
+          appendTextRun(runs, rArray[runIndex], paragraphRunDefaults, themeColours, defaultFont);
+          runIndex += 1;
+          continue;
+        }
+        if (child['a:fld']) {
+          appendTextRun(runs, fldArray[fieldIndex], paragraphRunDefaults, themeColours, defaultFont);
+          fieldIndex += 1;
+          continue;
+        }
+        if (child['a:br']) {
+          runs.push({ text: '\n' });
+          breakIndex += 1;
+        }
       }
     }
 
-    if (fldList) {
-      const fldArray = Array.isArray(fldList) ? fldList : [fldList];
-      for (const fld of fldArray) {
-        const rPr = fld['a:rPr'];
-        const text = fld['a:t'] != null ? String(fld['a:t']) : '';
-        const runDefaults = mergeRunDefaults(paragraphRunDefaults, parseRunStyleDefaults(rPr, themeColours, defaultFont));
-        runs.push(applyRunDefaults({ text }, runDefaults));
-      }
+    while (runIndex < rArray.length) {
+      appendTextRun(runs, rArray[runIndex], paragraphRunDefaults, themeColours, defaultFont);
+      runIndex += 1;
     }
 
-    // Handle line breaks
-    const brList = p['a:br'];
-    if (brList) {
-      const brArray = Array.isArray(brList) ? brList : [brList];
-      for (const _br of brArray) {
-        runs.push({ text: '\n' });
-      }
+    while (fieldIndex < fldArray.length) {
+      appendTextRun(runs, fldArray[fieldIndex], paragraphRunDefaults, themeColours, defaultFont);
+      fieldIndex += 1;
+    }
+
+    while (breakIndex < brArray.length) {
+      runs.push({ text: '\n' });
+      breakIndex += 1;
     }
 
     // If no runs but has endParaRPr, it's an empty paragraph (still emit it for spacing)
@@ -1008,7 +1160,7 @@ function parseCustomGeometry(spPr) {
   };
 }
 
-function parseShape(spNode, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds = []) {
+function parseShape(spNode, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds = [], orderedTextBodyMap) {
   const nvSpPr = spNode['p:nvSpPr'] || spNode['p:nvCxnSpPr'];
   const cNvPr = nvSpPr?.['p:cNvPr'];
   const id = String(cNvPr?.['@_id'] || '');
@@ -1026,7 +1178,7 @@ function parseShape(spNode, slideRels, themeColours, defaultFont, themeLineStyle
   const flip = parseFlipFlags(spPr?.['a:xfrm']);
 
   const txBody = spNode['p:txBody'];
-  const paragraphs = parseTextBody(txBody, themeColours, defaultFont);
+  const paragraphs = parseTextBody(txBody, themeColours, defaultFont, undefined, orderedTextBodyMap?.get(id));
 
   // Vertical text alignment from bodyPr
   let verticalAlign;
@@ -1147,7 +1299,16 @@ function parsePicture(picNode, slideRels, themeColours, groupContext, ancestorGr
   };
 }
 
-function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds = []) {
+function collectDrawableNodes(
+  spTree,
+  slideRels,
+  themeColours,
+  defaultFont,
+  themeLineStyles,
+  groupContext,
+  ancestorGroupIds = [],
+  orderedTextBodyMap,
+) {
   const shapes = [];
   if (!spTree) return shapes;
 
@@ -1155,7 +1316,7 @@ function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, them
   if (spNodes) {
     const list = Array.isArray(spNodes) ? spNodes : [spNodes];
     for (const sp of list) {
-      shapes.push(parseShape(sp, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds));
+      shapes.push(parseShape(sp, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds, orderedTextBodyMap));
     }
   }
 
@@ -1171,7 +1332,7 @@ function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, them
   if (cxnSpNodes) {
     const list = Array.isArray(cxnSpNodes) ? cxnSpNodes : [cxnSpNodes];
     for (const cxn of list) {
-      shapes.push(parseShape(cxn, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds));
+      shapes.push(parseShape(cxn, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds, orderedTextBodyMap));
     }
   }
 
@@ -1182,7 +1343,18 @@ function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, them
       const groupId = getGroupNodeId(grp);
       const nextAncestorGroupIds = groupId ? [...ancestorGroupIds, groupId] : ancestorGroupIds;
       const nextGroupContext = parseGroupContext(grp, groupContext);
-      shapes.push(...collectDrawableNodes(grp, slideRels, themeColours, defaultFont, themeLineStyles, nextGroupContext, nextAncestorGroupIds));
+      shapes.push(
+        ...collectDrawableNodes(
+          grp,
+          slideRels,
+          themeColours,
+          defaultFont,
+          themeLineStyles,
+          nextGroupContext,
+          nextAncestorGroupIds,
+          orderedTextBodyMap,
+        ),
+      );
     }
   }
 
@@ -1195,7 +1367,18 @@ function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, them
     const choice = asArray(alternateContent?.['mc:Choice'])[0] || asArray(alternateContent?.Choice)[0];
     const drawableContainer = fallback || choice;
     if (drawableContainer) {
-      shapes.push(...collectDrawableNodes(drawableContainer, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds));
+      shapes.push(
+        ...collectDrawableNodes(
+          drawableContainer,
+          slideRels,
+          themeColours,
+          defaultFont,
+          themeLineStyles,
+          groupContext,
+          ancestorGroupIds,
+          orderedTextBodyMap,
+        ),
+      );
     }
   }
 
@@ -1461,12 +1644,24 @@ function parseSlideBackground(bgNode, slideRels, themeColours) {
  * Placeholder shapes are collected for inheritance only and are not rendered
  * directly, since PowerPoint/Keynote treat them as template slots.
  */
-function parseLayoutMasterShapes(spTree, rels, themeColours, defaultFont, themeLineStyles) {
+function parseLayoutMasterShapes(spTree, rels, themeColours, defaultFont, themeLineStyles, orderedTextBodyMap, orderedDrawableIds) {
   const shapes = [];
   const placeholders = [];
   if (!spTree) return { shapes, placeholders };
 
-  const drawableNodes = collectDrawableNodes(spTree, rels, themeColours, defaultFont, themeLineStyles);
+  const drawableNodes = sortShapesByDrawOrder(
+    collectDrawableNodes(
+      spTree,
+      rels,
+      themeColours,
+      defaultFont,
+      themeLineStyles,
+      undefined,
+      [],
+      orderedTextBodyMap,
+    ),
+    orderedDrawableIds,
+  );
   for (const shape of drawableNodes) {
     if (shape.placeholder) {
       placeholders.push(shape);
@@ -1553,6 +1748,7 @@ function parseNotes(notesXmlStr, parser) {
 async function parsePptx(filePath: string, deckId: string, getDeckDir: (id: string) => string): Promise<PptxDeckData> {
   const zip = new AdmZip(filePath);
   const parser = createXmlParser();
+  const orderedParser = createXmlParser({ preserveOrder: true });
 
   // ── Read presentation.xml ──
   const presXml = zip.readAsText('ppt/presentation.xml');
@@ -1691,6 +1887,7 @@ async function parsePptx(filePath: string, deckId: string, getDeckDir: (id: stri
     try {
       const xml = zip.readAsText(layoutFullPath);
       const doc = parser.parse(xml);
+      const { orderedTextBodyMap, orderedDrawableIds } = parseOrderedShapeMetadata(xml, orderedParser);
       const sldLayout = doc?.['p:sldLayout'];
       const cSld = sldLayout?.['p:cSld'];
       const showMasterShapes = sldLayout?.['@_showMasterSp'] !== '0' && sldLayout?.['@_showMasterSp'] !== 'false';
@@ -1723,6 +1920,8 @@ async function parsePptx(filePath: string, deckId: string, getDeckDir: (id: stri
         themeData.colours,
         themeData.defaultFont,
         themeData.lineStyles,
+        orderedTextBodyMap,
+        orderedDrawableIds,
       );
       extractMediaFromShapes(shapes, layoutDir);
       extractMediaFromShapes(placeholders, layoutDir);
@@ -1745,6 +1944,7 @@ async function parsePptx(filePath: string, deckId: string, getDeckDir: (id: stri
     try {
       const xml = zip.readAsText(masterFullPath);
       const doc = parser.parse(xml);
+      const { orderedTextBodyMap, orderedDrawableIds } = parseOrderedShapeMetadata(xml, orderedParser);
       const sldMaster = doc?.['p:sldMaster'];
       const cSld = sldMaster?.['p:cSld'];
       const textStyles = parseMasterTextStyles(sldMaster?.['p:txStyles'], themeData.colours, themeData.defaultFont);
@@ -1775,6 +1975,8 @@ async function parsePptx(filePath: string, deckId: string, getDeckDir: (id: stri
         themeData.colours,
         themeData.defaultFont,
         themeData.lineStyles,
+        orderedTextBodyMap,
+        orderedDrawableIds,
       );
       extractMediaFromShapes(shapes, masterDir);
       extractMediaFromShapes(placeholders, masterDir);
@@ -1800,6 +2002,7 @@ async function parsePptx(filePath: string, deckId: string, getDeckDir: (id: stri
       continue;
     }
     const slideDoc = parser.parse(slideXml);
+    const { orderedTextBodyMap, orderedDrawableIds } = parseOrderedShapeMetadata(slideXml, orderedParser);
     const sld = slideDoc?.['p:sld'];
 
     // ── Slide rels ──
@@ -1844,12 +2047,18 @@ async function parsePptx(filePath: string, deckId: string, getDeckDir: (id: stri
 
     // ── Shapes from the slide itself ──
     const spTree = cSld?.['p:spTree'];
-    const rawSlideShapes = collectDrawableNodes(
-      spTree,
-      slideRels,
-      themeData.colours,
-      themeData.defaultFont,
-      themeData.lineStyles,
+    const rawSlideShapes = sortShapesByDrawOrder(
+      collectDrawableNodes(
+        spTree,
+        slideRels,
+        themeData.colours,
+        themeData.defaultFont,
+        themeData.lineStyles,
+        undefined,
+        [],
+        orderedTextBodyMap,
+      ),
+      orderedDrawableIds,
     );
     const slideShapes = rawSlideShapes
       .map((shape) => {

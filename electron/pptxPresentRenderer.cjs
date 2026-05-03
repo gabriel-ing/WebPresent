@@ -74,6 +74,26 @@ ${ANIMATION_KEYFRAMES}
 .slide-root{position:absolute;left:0;top:0;transform-origin:0 0;overflow:hidden;font-family:Calibri,Arial,Helvetica,sans-serif;font-size:18pt;color:#000}
 </style></head><body><div class="slide-root"></div><script>
 (function(){
+  function fitOverflowingText(root){
+    if(!root)return;
+    var boxes=root.querySelectorAll('.pptx-text-shape');
+    boxes.forEach(function(box){
+      var content=box.querySelector('.pptx-text-content');
+      if(!content)return;
+      content.style.transform='';
+      content.style.width='100%';
+      var styles=window.getComputedStyle(box);
+      var availableHeight=box.clientHeight-parseFloat(styles.paddingTop||'0')-parseFloat(styles.paddingBottom||'0');
+      if(!(availableHeight>0))return;
+      var contentHeight=content.scrollHeight;
+      if(contentHeight<=availableHeight+1)return;
+      box.style.justifyContent='flex-start';
+      var scale=availableHeight/contentHeight;
+      if(!(scale>0&&scale<1))return;
+      content.style.transform='scale('+scale+')';
+      content.style.width=(100/scale)+'%';
+    });
+  }
   function fit(){
     var r=document.querySelector('.slide-root');
     if(!r)return;
@@ -95,6 +115,7 @@ ${ANIMATION_KEYFRAMES}
     r.style.height=state.height+'px';
     r.style.background=state.backgroundCss;
     r.innerHTML=state.shapesHtml||'';
+    fitOverflowingText(r);
     fit();
   };
   window.addEventListener('resize',fit);

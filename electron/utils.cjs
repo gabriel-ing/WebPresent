@@ -74,7 +74,7 @@ function normalizeTiffDimension(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-function convertTiffBufferToPngDataUrl(buffer) {
+function convertTiffBufferToPngBuffer(buffer) {
   const ifds = UTIF.decode(buffer);
   const frame = Array.isArray(ifds) ? ifds[0] : null;
   if (!frame) return null;
@@ -89,24 +89,39 @@ function convertTiffBufferToPngDataUrl(buffer) {
   const png = new PNG({ width, height });
   rgba.copy(png.data);
 
-  return bufferToDataUrl(PNG.sync.write(png), 'image/png');
+  return PNG.sync.write(png);
 }
 
-async function readFileAsDataUrl(filePath, options = {}) {
+function convertTiffBufferToPngDataUrl(buffer) {
+  const pngBuffer = convertTiffBufferToPngBuffer(buffer);
+  return pngBuffer ? bufferToDataUrl(pngBuffer, 'image/png') : null;
+}
+
+async function readFileForPreviewAsset(filePath, options = {}) {
   const readFile = options.readFile || fs.readFile;
   const buffer = await readFile(filePath);
   const mimeType = mimeTypeFromPath(filePath);
 
   if (mimeType === 'image/tiff') {
     try {
-      const pngDataUrl = convertTiffBufferToPngDataUrl(buffer);
-      if (pngDataUrl) return pngDataUrl;
+      const pngBuffer = convertTiffBufferToPngBuffer(buffer);
+      if (pngBuffer) {
+        return {
+          buffer: pngBuffer,
+          mimeType: 'image/png',
+        };
+      }
     } catch {
       // Fall back to the original bytes if conversion fails.
     }
   }
 
-  return bufferToDataUrl(buffer, mimeType);
+  return { buffer, mimeType };
+}
+
+async function readFileAsDataUrl(filePath, options = {}) {
+  const asset = await readFileForPreviewAsset(filePath, options);
+  return bufferToDataUrl(asset.buffer, asset.mimeType);
 }
 
 module.exports = {
@@ -115,6 +130,7 @@ module.exports = {
   extensionFor,
   mimeTypeFromPath,
   mediaKindFromPath,
+  readFileForPreviewAsset,
   readFileAsDataUrl,
   SLIDE_COPY_EXTENSIONS,
 };

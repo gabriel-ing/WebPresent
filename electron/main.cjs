@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, globalShortcut, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { existsSync } = require('node:fs');
@@ -6,19 +6,16 @@ const { pathToFileURL } = require('node:url');
 
 const { getDeckDir, createDeck, loadDeck, saveDeck, getOrCreateInitialDeck, exportDeck, importDeck } = require('./deckManager.cjs');
 const { importSlidesToDeck, pickSlideFiles, pickDirectoryImageFiles, pickPptxFile } = require('./slideImporter.cjs');
-const { mimeTypeFromPath, readFileAsDataUrl } = require('./utils.cjs');
+const { mimeTypeFromPath, readFileAsDataUrl, readFileForPreviewAsset } = require('./utils.cjs');
 const { parsePptx } = require('./pptxParser.cjs');
 const { buildPptxPresentationDocument, buildPptxRuntimeUpdateScript, createPptxPresentationDocumentBuilder } = require('./pptxPresentRenderer.cjs');
 const { createLatestOnlyQueue } = require('./latestOnlyQueue.cjs');
+const { PRESENTATION_INPUT_ACTIONS, getPresentationInputAction } = require('./presentationInput.cjs');
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
 
 const MIN_WEB_ZOOM_PERCENT = 25;
 const MAX_WEB_ZOOM_PERCENT = 300;
-
-const PRESENTATION_SHORTCUT_NEXT = 'Shift+Right';
-const PRESENTATION_SHORTCUT_PREVIOUS = 'Shift+Left';
-const PRESENTATION_SHORTCUT_EXIT = 'Escape';
 
 // ── Presentation state ────────────────────────────────────────────────────────
 
@@ -60,6 +57,12 @@ async function readSlideAsDataUrl(deckId, relativePath) {
   const absolutePath = path.join(getDeckDir(deckId), relativePath);
   if (!existsSync(absolutePath)) return null;
   return readFileAsDataUrl(absolutePath);
+}
+
+async function readSlideForPreviewAsset(deckId, relativePath) {
+  const absolutePath = path.join(getDeckDir(deckId), relativePath);
+  if (!existsSync(absolutePath)) return null;
+  return readFileForPreviewAsset(absolutePath);
 }
 
 function getSlideFileUrl(deckId, relativePath) {
@@ -251,7 +254,6 @@ function resetPresentationState() {
 }
 
 async function stopPresentation() {
-  unregisterPresentationShortcuts();
   if (presentationWindow && !presentationWindow.isDestroyed()) {
     presentationWindow.destroy();
   }
@@ -295,7 +297,6 @@ async function startPresentation(deckId, startIndex = 0, displayId) {
   });
 
   presentationWindow.on('closed', () => {
-    unregisterPresentationShortcuts();
     presentationWindow = null;
     resetPresentationState();
   });
@@ -307,22 +308,26 @@ async function startPresentation(deckId, startIndex = 0, displayId) {
   });
 
   presentationWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown') return;
-    if (input.key === 'ArrowRight' && input.shift) {
+    const action = getPresentationInputAction(input);
+    if (!action) return;
+
+    if (action === PRESENTATION_INPUT_ACTIONS.next) {
       event.preventDefault();
       void goToNextPresentationStep().catch((error) => {
         if (!isIgnorableLoadError(error)) console.error('Could not advance presentation step.', error);
       });
       return;
     }
-    if (input.key === 'ArrowLeft' && input.shift) {
+
+    if (action === PRESENTATION_INPUT_ACTIONS.previous) {
       event.preventDefault();
       void goToPreviousPresentationStep().catch((error) => {
         if (!isIgnorableLoadError(error)) console.error('Could not go back presentation step.', error);
       });
       return;
     }
-    if (input.key === 'Escape') {
+
+    if (action === PRESENTATION_INPUT_ACTIONS.exit) {
       event.preventDefault();
       void stopPresentation().catch((error) => {
         console.error('Could not stop presentation window.', error);
@@ -334,32 +339,7 @@ async function startPresentation(deckId, startIndex = 0, displayId) {
     event.preventDefault();
   });
 
-  registerPresentationShortcuts();
   await showPresentationStep(currentPresentationIndex);
-}
-
-// ── Global shortcuts ──────────────────────────────────────────────────────────
-
-function unregisterPresentationShortcuts() {
-  globalShortcut.unregister(PRESENTATION_SHORTCUT_NEXT);
-  globalShortcut.unregister(PRESENTATION_SHORTCUT_PREVIOUS);
-  globalShortcut.unregister(PRESENTATION_SHORTCUT_EXIT);
-}
-
-function registerPresentationShortcuts() {
-  unregisterPresentationShortcuts();
-  globalShortcut.register(PRESENTATION_SHORTCUT_NEXT, () => {
-    if (!presentationWindow || presentationWindow.isDestroyed() || !presentationWindow.isFocused()) return;
-    withPresentationErrorLogging(() => goToNextPresentationStep(), 'Could not advance presentation step.');
-  });
-  globalShortcut.register(PRESENTATION_SHORTCUT_PREVIOUS, () => {
-    if (!presentationWindow || presentationWindow.isDestroyed() || !presentationWindow.isFocused()) return;
-    withPresentationErrorLogging(() => goToPreviousPresentationStep(), 'Could not go back presentation step.');
-  });
-  globalShortcut.register(PRESENTATION_SHORTCUT_EXIT, () => {
-    if (!presentationWindow || presentationWindow.isDestroyed() || !presentationWindow.isFocused()) return;
-    withPresentationErrorLogging(() => stopPresentation(), 'Could not stop presentation window.');
-  });
 }
 
 // ── Editor window ─────────────────────────────────────────────────────────────
@@ -409,6 +389,9 @@ ipcMain.handle('deck:resolveSlideUrl', (_event, params) => {
   if (!existsSync(fullPath)) return null;
   return pathToFileURL(fullPath).href;
 });
+ipcMain.handle('deck:resolveSlidePreviewAsset', (_event, params) =>
+  readSlideForPreviewAsset(params.deckId, params.relativePath),
+);
 ipcMain.handle('deck:resolveSlideDataUrl', (_event, params) =>
   readSlideAsDataUrl(params.deckId, params.relativePath),
 );
@@ -438,10 +421,6 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createEditorWindow();
   });
-});
-
-app.on('will-quit', () => {
-  unregisterPresentationShortcuts();
 });
 
 app.on('window-all-closed', () => {

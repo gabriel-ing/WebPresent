@@ -5,6 +5,27 @@ import type { PptxSlideData } from '@webpresent/pptx-engine';
 
 function makeFitScript(width: number, height: number): string {
   return `(function(){
+  function fitOverflowingText(){
+    var root=document.querySelector('.slide-root');
+    if(!root)return;
+    var boxes=root.querySelectorAll('.pptx-text-shape');
+    boxes.forEach(function(box){
+      var content=box.querySelector('.pptx-text-content');
+      if(!content)return;
+      content.style.transform='';
+      content.style.width='100%';
+      var styles=window.getComputedStyle(box);
+      var availableHeight=box.clientHeight-parseFloat(styles.paddingTop||'0')-parseFloat(styles.paddingBottom||'0');
+      if(!(availableHeight>0))return;
+      var contentHeight=content.scrollHeight;
+      if(contentHeight<=availableHeight+1)return;
+      box.style.justifyContent='flex-start';
+      var scale=availableHeight/contentHeight;
+      if(!(scale>0&&scale<1))return;
+      content.style.transform='scale('+scale+')';
+      content.style.width=(100/scale)+'%';
+    });
+  }
   function fit(){
     var root=document.querySelector('.slide-root');
     if(!root)return;
@@ -17,12 +38,16 @@ function makeFitScript(width: number, height: number): string {
     root.style.left=Math.round((vw-sw*scale)/2)+'px';
     root.style.top=Math.round((vh-sh*scale)/2)+'px';
   }
-  window.addEventListener('resize',fit);
-  window.addEventListener('load',fit);
-  setTimeout(fit,0);
-  setTimeout(fit,50);
-  setTimeout(fit,200);
-  if(window.ResizeObserver){new ResizeObserver(fit).observe(document.documentElement);}
+  function updateLayout(){
+    fitOverflowingText();
+    fit();
+  }
+  window.addEventListener('resize',updateLayout);
+  window.addEventListener('load',updateLayout);
+  setTimeout(updateLayout,0);
+  setTimeout(updateLayout,50);
+  setTimeout(updateLayout,200);
+  if(window.ResizeObserver){new ResizeObserver(updateLayout).observe(document.documentElement);}
 })();`;
 }
 

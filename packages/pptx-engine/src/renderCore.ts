@@ -177,21 +177,40 @@ export function renderTextRun(run: PptxTextRun, fontScale = 1): string {
   return styles.length ? `<span style="${styles.join(';')}">${text}</span>` : `<span>${text}</span>`;
 }
 
+function fontFamilyToCssStack(fontFamily: string): string {
+  const normalized = fontFamily.trim().toLowerCase();
+
+  if (normalized === 'gotham book' || normalized === 'gotham' || normalized.startsWith('gotham ')) {
+    return `${fontFamily},Avenir Next,Avenir,Helvetica Neue,Arial,sans-serif`;
+  }
+
+  if (normalized === 'segoe script') {
+    return `${fontFamily},Bradley Hand,Marker Felt,Snell Roundhand,Apple Chancery,cursive`;
+  }
+
+  if (normalized === 'segoe print') {
+    return `${fontFamily},Bradley Hand,Marker Felt,Comic Sans MS,cursive`;
+  }
+
+  return `${fontFamily},sans-serif`;
+}
+
 function buildTextRunStyles(run: PptxTextRun, fontScale = 1): string[] {
   const styles: string[] = [];
   if (run.bold) styles.push('font-weight:bold');
   if (run.italic) styles.push('font-style:italic');
   if (run.underline) styles.push('text-decoration:underline');
   if (run.fontSize) styles.push(`font-size:${formatNumeric(run.fontSize * fontScale)}pt`);
-  if (run.fontFamily) styles.push(`font-family:${escHtml(run.fontFamily)},sans-serif`);
+  if (run.fontFamily) styles.push(`font-family:${escHtml(fontFamilyToCssStack(run.fontFamily))}`);
   if (run.colour) styles.push(`color:${run.colour}`);
   return styles;
 }
 
 export function renderParagraph(para: PptxParagraph, fontScale = 1): string {
-  const styles = ['margin:0', 'padding:0 0 0.15em 0'];
+  const styles = ['margin:0', 'padding:0'];
   if (para.alignment) styles.push(`text-align:${para.alignment}`);
   if (para.lineSpacing && para.lineSpacing > 0) styles.push(`line-height:${formatNumeric(para.lineSpacing)}`);
+  else styles.push('line-height:1');
   if (para.level && para.level > 0) styles.push(`padding-left:${para.level * 1.5}em`);
   const hasVisibleText = paragraphHasVisibleText(para);
   const runs = para.runs.map((run) => renderTextRun(run, fontScale)).join('');
@@ -252,11 +271,20 @@ function buildLineMarker(id: string, colour: string, strokeWidthPx: number, posi
 }
 
 function renderLineShape(shape: PptxShape, styles: string[]): string {
-  const lineWidth = Math.max(shape.width, 1);
-  const lineHeight = Math.max(shape.height, 1);
   const strokeWidthPt = shape.border?.width || 1;
   const strokeWidthPx = (strokeWidthPt * 96) / 72;
-  const strokePaint = buildSvgBorderPaint(`${shape.id}-stroke`, shape.border, lineWidth, lineHeight);
+  const markerSize =
+    shape.lineHead === 'triangle' || shape.lineTail === 'triangle'
+      ? Math.max(strokeWidthPx * 2.5, 10)
+      : 0;
+  const collapsedAxisSize = Math.max(strokeWidthPx, markerSize, 1);
+  const lineWidth = Math.max(shape.width, 1);
+  const lineHeight = Math.max(shape.height, 1);
+  const renderWidth = shape.width === 0 ? collapsedAxisSize : lineWidth;
+  const renderHeight = shape.height === 0 ? collapsedAxisSize : lineHeight;
+  const offsetX = shape.width === 0 ? renderWidth / 2 : 0;
+  const offsetY = shape.height === 0 ? renderHeight / 2 : 0;
+  const strokePaint = buildSvgBorderPaint(`${shape.id}-stroke`, shape.border, renderWidth, renderHeight);
   const stroke = strokePaint?.value || shape.fill?.colour || '#000000';
   const defs: string[] = [];
 
@@ -264,10 +292,10 @@ function renderLineShape(shape: PptxShape, styles: string[]): string {
   if (shape.lineHead === 'triangle') defs.push(buildLineMarker(`${shape.id}-head`, stroke, strokeWidthPx, 'start'));
   if (shape.lineTail === 'triangle') defs.push(buildLineMarker(`${shape.id}-tail`, stroke, strokeWidthPx, 'end'));
 
-  const x1 = shape.width > 0 ? (shape.flipH ? lineWidth : 0) : strokeWidthPx / 2;
-  const y1 = shape.height > 0 ? (shape.flipV ? lineHeight : 0) : strokeWidthPx / 2;
-  const x2 = shape.width > 0 ? (shape.flipH ? 0 : lineWidth) : strokeWidthPx / 2;
-  const y2 = shape.height > 0 ? (shape.flipV ? 0 : lineHeight) : strokeWidthPx / 2;
+  const x1 = shape.width > 0 ? (shape.flipH ? lineWidth : 0) : offsetX;
+  const y1 = shape.height > 0 ? (shape.flipV ? lineHeight : 0) : offsetY;
+  const x2 = shape.width > 0 ? (shape.flipH ? 0 : lineWidth) : offsetX;
+  const y2 = shape.height > 0 ? (shape.flipV ? 0 : lineHeight) : offsetY;
 
   const lineAttributes = [
     `x1="${formatNumeric(x1)}"`,
@@ -284,16 +312,68 @@ function renderLineShape(shape: PptxShape, styles: string[]): string {
   if (shape.lineHead === 'triangle') lineAttributes.push(`marker-start="url(#${shape.id}-head)"`);
   if (shape.lineTail === 'triangle') lineAttributes.push(`marker-end="url(#${shape.id}-tail)"`);
 
-  styles.push(`width:${lineWidth}px`, `height:${lineHeight}px`, 'overflow:visible');
+  styles.push(
+    `left:${formatNumeric(shape.x - offsetX)}px`,
+    `top:${formatNumeric(shape.y - offsetY)}px`,
+    `width:${formatNumeric(renderWidth)}px`,
+    `height:${formatNumeric(renderHeight)}px`,
+    'overflow:visible',
+  );
 
   return [
     `<div style="${styles.join(';')}">`,
-    `<svg width="100%" height="100%" viewBox="0 0 ${formatNumeric(lineWidth)} ${formatNumeric(lineHeight)}" preserveAspectRatio="none" aria-hidden="true">`,
+    `<svg width="100%" height="100%" viewBox="0 0 ${formatNumeric(renderWidth)} ${formatNumeric(renderHeight)}" preserveAspectRatio="none" aria-hidden="true">`,
     defs.length ? `<defs>${defs.join('')}</defs>` : '',
     `<line ${lineAttributes.join(' ')}/>`,
     '</svg>',
     '</div>',
   ].join('');
+}
+
+function renderGradientBorderOverlay(shape: PptxShape): string {
+  if (!shape.border?.gradientStops?.length || !shape.border.width) return '';
+
+  const width = Math.max(shape.width || 0, 1);
+  const height = Math.max(shape.height || 0, 1);
+  const strokeWidthPx = formatNumeric((shape.border.width * 96) / 72);
+  const halfStroke = strokeWidthPx / 2;
+  const innerWidth = Math.max(width - strokeWidthPx, 0);
+  const innerHeight = Math.max(height - strokeWidthPx, 0);
+  const paint = buildSvgBorderPaint(`${shape.id}-stroke`, shape.border, width, height);
+
+  if (!paint) return '';
+
+  const defs = paint.defs ? `<defs>${paint.defs}</defs>` : '';
+  const strokeAttributes = [
+    'fill="none"',
+    `stroke="${escHtml(paint.value)}"`,
+    `stroke-width="${formatNumeric(strokeWidthPx)}"`,
+    'vector-effect="non-scaling-stroke"',
+  ];
+
+  if (shape.border.style === 'dashed') strokeAttributes.push('stroke-dasharray="6 4"');
+  if (shape.border.style === 'dotted') strokeAttributes.push('stroke-dasharray="1 4"', 'stroke-linecap="round"');
+
+  let borderMarkup = '';
+  if (shape.type === 'ellipse') {
+    borderMarkup = `<ellipse cx="${formatNumeric(width / 2)}" cy="${formatNumeric(height / 2)}" rx="${formatNumeric(innerWidth / 2)}" ry="${formatNumeric(innerHeight / 2)}" ${strokeAttributes.join(' ')}/>`;
+  } else {
+    const rectAttributes = [
+      `x="${formatNumeric(halfStroke)}"`,
+      `y="${formatNumeric(halfStroke)}"`,
+      `width="${formatNumeric(innerWidth)}"`,
+      `height="${formatNumeric(innerHeight)}"`,
+    ];
+
+    if (shape.type === 'roundRect' && shape.cornerRadius) {
+      const radius = Math.max(shape.cornerRadius - halfStroke, 0);
+      rectAttributes.push(`rx="${formatNumeric(radius)}"`, `ry="${formatNumeric(radius)}"`);
+    }
+
+    borderMarkup = `<rect ${rectAttributes.join(' ')} ${strokeAttributes.join(' ')}/>`;
+  }
+
+  return `<svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" viewBox="0 0 ${formatNumeric(width)} ${formatNumeric(height)}" preserveAspectRatio="none" aria-hidden="true">${defs}${borderMarkup}</svg>`;
 }
 
 export function renderShape(
@@ -310,6 +390,9 @@ export function renderShape(
   const hasVisibleText = visibleParagraphs.some(paragraphHasVisibleText);
   const textFitScale = shape.textFitScale && shape.textFitScale > 0 ? shape.textFitScale : 1;
   const innerHtml = hasVisibleText ? visibleParagraphs.map((paragraph) => renderParagraph(paragraph, textFitScale)).join('') : '';
+  const wrappedTextHtml = hasVisibleText
+    ? `<div class="pptx-text-content" style="width:100%;display:block;flex-shrink:0;transform-origin:top left">${innerHtml}</div>`
+    : '';
 
   const styles: string[] = [
     'position:absolute',
@@ -338,6 +421,11 @@ export function renderShape(
     const bg = fillToCss(shape.fill, mediaResolver);
     if (bg !== 'transparent') styles.push(`background:${bg}`);
   }
+
+  const gradientBorderOverlay =
+    shape.type !== 'image' && shape.type !== 'line'
+      ? renderGradientBorderOverlay(shape)
+      : '';
 
   if (shape.border?.colour && shape.type !== 'line') {
     styles.push(`border:${shape.border.width}pt ${shape.border.style || 'solid'} ${shape.border.colour}`);
@@ -368,7 +456,12 @@ export function renderShape(
     return renderLineShape(shape, styles);
   }
 
-  return `<div style="${styles.join(';')}">${innerHtml}</div>`;
+  const containerAttributes = [`style="${styles.join(';')}"`];
+  if (hasVisibleText) {
+    containerAttributes.push('class="pptx-text-shape"');
+  }
+
+  return `<div ${containerAttributes.join(' ')}>${gradientBorderOverlay}${wrappedTextHtml}</div>`;
 }
 
 export function buildSlideState(

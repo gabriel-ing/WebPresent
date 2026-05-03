@@ -2,67 +2,91 @@ import { useEffect, useState } from 'react';
 import type { Presentation, PresentationStep } from '../types';
 
 /**
- * Manages a cache of media data URLs for the current presentation.
+ * Resolves preview media for the selected step only.
  *
- * Resolves both plain SlideRef media and PPTX shape/background images
- * using a single unified effect.
- *
- * Cache key format: `"<deckId>|<relativePath>"`
+ * The preview pane uses blob URLs instead of data URLs so large slide assets
+ * do not balloon into multiple base64-encoded copies in memory.
  */
+
+function collectStepAssetPaths(selectedStep: PresentationStep | null): string[] {
+  if (!selectedStep) return [];
+
+  const paths = new Set<string>();
+
+  if (selectedStep.slideRef?.relativePath) {
+    paths.add(selectedStep.slideRef.relativePath);
+  }
+
+  if (selectedStep.pptxSlideData) {
+    const slide = selectedStep.pptxSlideData;
+    if (slide.background?.imageRelativePath) {
+      paths.add(slide.background.imageRelativePath);
+    }
+    for (const shape of slide.shapes) {
+      if (shape.imageRelativePath) paths.add(shape.imageRelativePath);
+      if (shape.fill?.imageRelativePath) paths.add(shape.fill.imageRelativePath);
+    }
+  }
+
+  return Array.from(paths);
+}
+
+function toUint8Array(buffer: Uint8Array | ArrayBuffer | number[]): Uint8Array {
+  if (buffer instanceof Uint8Array) return buffer;
+  if (buffer instanceof ArrayBuffer) return new Uint8Array(buffer);
+  return Uint8Array.from(buffer);
+}
+
+function toBlobPart(buffer: Uint8Array | ArrayBuffer | number[]): ArrayBuffer {
+  const bytes = toUint8Array(buffer);
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return copy;
+}
+
 export function useSlideUrls(
   presentation: Presentation | null,
   selectedStep: PresentationStep | null,
 ): Record<string, string> {
   const [slideUrls, setSlideUrls] = useState<Record<string, string>>({});
 
-  // Clear URL cache when the deck changes
-  const presentationId = presentation?.id ?? null;
+  const deckId = presentation?.id ?? '';
+  const pathsToResolve = collectStepAssetPaths(selectedStep);
+  const assetSignature = `${deckId}|${pathsToResolve.join('|')}`;
+
   useEffect(() => {
     setSlideUrls({});
-  }, [presentationId]);
-
-  useEffect(() => {
-    if (!presentation || !selectedStep || !window.presentApi) return;
-
-    const deckId = presentation.id;
-    const pathsToResolve: string[] = [];
-
-    // Plain slide
-    if (selectedStep.slideRef?.relativePath) {
-      pathsToResolve.push(selectedStep.slideRef.relativePath);
-    }
-
-    // PPTX slide — collect all embedded image paths
-    if (selectedStep.pptxSlideData) {
-      const slide = selectedStep.pptxSlideData;
-      if (slide.background?.imageRelativePath) {
-        pathsToResolve.push(slide.background.imageRelativePath);
-      }
-      for (const shape of slide.shapes) {
-        if (shape.imageRelativePath) pathsToResolve.push(shape.imageRelativePath);
-        if (shape.fill?.imageRelativePath) pathsToResolve.push(shape.fill.imageRelativePath);
-      }
-    }
-
-    const unresolved = pathsToResolve.filter((p) => !slideUrls[`${deckId}|${p}`]);
-    if (!unresolved.length) return;
+    if (!deckId || !pathsToResolve.length || !window.presentApi?.resolveSlidePreviewAsset) return;
 
     let mounted = true;
+    const createdUrls: string[] = [];
+
     async function resolveAll() {
       const results: Record<string, string> = {};
-      for (const relativePath of unresolved) {
-        const resolved = await window.presentApi!.resolveSlideDataUrl({ deckId, relativePath });
+      for (const relativePath of pathsToResolve) {
+        const asset = await window.presentApi!.resolveSlidePreviewAsset({ deckId, relativePath });
         if (!mounted) return;
-        if (resolved) results[`${deckId}|${relativePath}`] = resolved;
+        if (!asset) continue;
+
+        const blobUrl = URL.createObjectURL(
+          new Blob([toBlobPart(asset.buffer)], { type: asset.mimeType || 'application/octet-stream' }),
+        );
+        createdUrls.push(blobUrl);
+        results[`${deckId}|${relativePath}`] = blobUrl;
       }
-      if (Object.keys(results).length) {
-        setSlideUrls((prev) => ({ ...prev, ...results }));
+      if (!mounted) {
+        createdUrls.forEach((url) => URL.revokeObjectURL(url));
+        return;
       }
+      setSlideUrls(results);
     }
 
     void resolveAll();
-    return () => { mounted = false; };
-  }, [presentation, selectedStep]);
+    return () => {
+      mounted = false;
+      createdUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [assetSignature]);
 
   return slideUrls;
 }

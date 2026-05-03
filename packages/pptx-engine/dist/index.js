@@ -179,20 +179,34 @@ function renderTextRun(run, fontScale = 1) {
   const text = escHtml(run.text);
   return styles.length ? `<span style="${styles.join(";")}">${text}</span>` : `<span>${text}</span>`;
 }
+function fontFamilyToCssStack(fontFamily) {
+  const normalized = fontFamily.trim().toLowerCase();
+  if (normalized === "gotham book" || normalized === "gotham" || normalized.startsWith("gotham ")) {
+    return `${fontFamily},Avenir Next,Avenir,Helvetica Neue,Arial,sans-serif`;
+  }
+  if (normalized === "segoe script") {
+    return `${fontFamily},Bradley Hand,Marker Felt,Snell Roundhand,Apple Chancery,cursive`;
+  }
+  if (normalized === "segoe print") {
+    return `${fontFamily},Bradley Hand,Marker Felt,Comic Sans MS,cursive`;
+  }
+  return `${fontFamily},sans-serif`;
+}
 function buildTextRunStyles(run, fontScale = 1) {
   const styles = [];
   if (run.bold) styles.push("font-weight:bold");
   if (run.italic) styles.push("font-style:italic");
   if (run.underline) styles.push("text-decoration:underline");
   if (run.fontSize) styles.push(`font-size:${formatNumeric(run.fontSize * fontScale)}pt`);
-  if (run.fontFamily) styles.push(`font-family:${escHtml(run.fontFamily)},sans-serif`);
+  if (run.fontFamily) styles.push(`font-family:${escHtml(fontFamilyToCssStack(run.fontFamily))}`);
   if (run.colour) styles.push(`color:${run.colour}`);
   return styles;
 }
 function renderParagraph(para, fontScale = 1) {
-  const styles = ["margin:0", "padding:0 0 0.15em 0"];
+  const styles = ["margin:0", "padding:0"];
   if (para.alignment) styles.push(`text-align:${para.alignment}`);
   if (para.lineSpacing && para.lineSpacing > 0) styles.push(`line-height:${formatNumeric(para.lineSpacing)}`);
+  else styles.push("line-height:1");
   if (para.level && para.level > 0) styles.push(`padding-left:${para.level * 1.5}em`);
   const hasVisibleText = paragraphHasVisibleText(para);
   const runs = para.runs.map((run) => renderTextRun(run, fontScale)).join("");
@@ -238,20 +252,26 @@ function buildLineMarker(id, colour, strokeWidthPx, position) {
   return `<marker id="${escHtml(id)}" markerWidth="${formatNumeric(arrowSize)}" markerHeight="${formatNumeric(arrowSize)}" refX="${formatNumeric(refX)}" refY="${formatNumeric(halfSize)}" orient="auto" markerUnits="userSpaceOnUse"><path d="${path2}" fill="${escHtml(colour)}"/></marker>`;
 }
 function renderLineShape(shape, styles) {
-  const lineWidth = Math.max(shape.width, 1);
-  const lineHeight = Math.max(shape.height, 1);
   const strokeWidthPt = shape.border?.width || 1;
   const strokeWidthPx = strokeWidthPt * 96 / 72;
-  const strokePaint = buildSvgBorderPaint(`${shape.id}-stroke`, shape.border, lineWidth, lineHeight);
+  const markerSize = shape.lineHead === "triangle" || shape.lineTail === "triangle" ? Math.max(strokeWidthPx * 2.5, 10) : 0;
+  const collapsedAxisSize = Math.max(strokeWidthPx, markerSize, 1);
+  const lineWidth = Math.max(shape.width, 1);
+  const lineHeight = Math.max(shape.height, 1);
+  const renderWidth = shape.width === 0 ? collapsedAxisSize : lineWidth;
+  const renderHeight = shape.height === 0 ? collapsedAxisSize : lineHeight;
+  const offsetX = shape.width === 0 ? renderWidth / 2 : 0;
+  const offsetY = shape.height === 0 ? renderHeight / 2 : 0;
+  const strokePaint = buildSvgBorderPaint(`${shape.id}-stroke`, shape.border, renderWidth, renderHeight);
   const stroke = strokePaint?.value || shape.fill?.colour || "#000000";
   const defs = [];
   if (strokePaint?.defs) defs.push(strokePaint.defs);
   if (shape.lineHead === "triangle") defs.push(buildLineMarker(`${shape.id}-head`, stroke, strokeWidthPx, "start"));
   if (shape.lineTail === "triangle") defs.push(buildLineMarker(`${shape.id}-tail`, stroke, strokeWidthPx, "end"));
-  const x1 = shape.width > 0 ? shape.flipH ? lineWidth : 0 : strokeWidthPx / 2;
-  const y1 = shape.height > 0 ? shape.flipV ? lineHeight : 0 : strokeWidthPx / 2;
-  const x2 = shape.width > 0 ? shape.flipH ? 0 : lineWidth : strokeWidthPx / 2;
-  const y2 = shape.height > 0 ? shape.flipV ? 0 : lineHeight : strokeWidthPx / 2;
+  const x1 = shape.width > 0 ? shape.flipH ? lineWidth : 0 : offsetX;
+  const y1 = shape.height > 0 ? shape.flipV ? lineHeight : 0 : offsetY;
+  const x2 = shape.width > 0 ? shape.flipH ? 0 : lineWidth : offsetX;
+  const y2 = shape.height > 0 ? shape.flipV ? 0 : lineHeight : offsetY;
   const lineAttributes = [
     `x1="${formatNumeric(x1)}"`,
     `y1="${formatNumeric(y1)}"`,
@@ -265,15 +285,58 @@ function renderLineShape(shape, styles) {
   if (shape.border?.style === "dotted") lineAttributes.push('stroke-dasharray="1 4"', 'stroke-linecap="round"');
   if (shape.lineHead === "triangle") lineAttributes.push(`marker-start="url(#${shape.id}-head)"`);
   if (shape.lineTail === "triangle") lineAttributes.push(`marker-end="url(#${shape.id}-tail)"`);
-  styles.push(`width:${lineWidth}px`, `height:${lineHeight}px`, "overflow:visible");
+  styles.push(
+    `left:${formatNumeric(shape.x - offsetX)}px`,
+    `top:${formatNumeric(shape.y - offsetY)}px`,
+    `width:${formatNumeric(renderWidth)}px`,
+    `height:${formatNumeric(renderHeight)}px`,
+    "overflow:visible"
+  );
   return [
     `<div style="${styles.join(";")}">`,
-    `<svg width="100%" height="100%" viewBox="0 0 ${formatNumeric(lineWidth)} ${formatNumeric(lineHeight)}" preserveAspectRatio="none" aria-hidden="true">`,
+    `<svg width="100%" height="100%" viewBox="0 0 ${formatNumeric(renderWidth)} ${formatNumeric(renderHeight)}" preserveAspectRatio="none" aria-hidden="true">`,
     defs.length ? `<defs>${defs.join("")}</defs>` : "",
     `<line ${lineAttributes.join(" ")}/>`,
     "</svg>",
     "</div>"
   ].join("");
+}
+function renderGradientBorderOverlay(shape) {
+  if (!shape.border?.gradientStops?.length || !shape.border.width) return "";
+  const width = Math.max(shape.width || 0, 1);
+  const height = Math.max(shape.height || 0, 1);
+  const strokeWidthPx = formatNumeric(shape.border.width * 96 / 72);
+  const halfStroke = strokeWidthPx / 2;
+  const innerWidth = Math.max(width - strokeWidthPx, 0);
+  const innerHeight = Math.max(height - strokeWidthPx, 0);
+  const paint = buildSvgBorderPaint(`${shape.id}-stroke`, shape.border, width, height);
+  if (!paint) return "";
+  const defs = paint.defs ? `<defs>${paint.defs}</defs>` : "";
+  const strokeAttributes = [
+    'fill="none"',
+    `stroke="${escHtml(paint.value)}"`,
+    `stroke-width="${formatNumeric(strokeWidthPx)}"`,
+    'vector-effect="non-scaling-stroke"'
+  ];
+  if (shape.border.style === "dashed") strokeAttributes.push('stroke-dasharray="6 4"');
+  if (shape.border.style === "dotted") strokeAttributes.push('stroke-dasharray="1 4"', 'stroke-linecap="round"');
+  let borderMarkup = "";
+  if (shape.type === "ellipse") {
+    borderMarkup = `<ellipse cx="${formatNumeric(width / 2)}" cy="${formatNumeric(height / 2)}" rx="${formatNumeric(innerWidth / 2)}" ry="${formatNumeric(innerHeight / 2)}" ${strokeAttributes.join(" ")}/>`;
+  } else {
+    const rectAttributes = [
+      `x="${formatNumeric(halfStroke)}"`,
+      `y="${formatNumeric(halfStroke)}"`,
+      `width="${formatNumeric(innerWidth)}"`,
+      `height="${formatNumeric(innerHeight)}"`
+    ];
+    if (shape.type === "roundRect" && shape.cornerRadius) {
+      const radius = Math.max(shape.cornerRadius - halfStroke, 0);
+      rectAttributes.push(`rx="${formatNumeric(radius)}"`, `ry="${formatNumeric(radius)}"`);
+    }
+    borderMarkup = `<rect ${rectAttributes.join(" ")} ${strokeAttributes.join(" ")}/>`;
+  }
+  return `<svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" viewBox="0 0 ${formatNumeric(width)} ${formatNumeric(height)}" preserveAspectRatio="none" aria-hidden="true">${defs}${borderMarkup}</svg>`;
 }
 function renderShape(shape, animationStep, mediaResolver = () => "") {
   if (shape.animationGroup > animationStep) return "";
@@ -284,6 +347,7 @@ function renderShape(shape, animationStep, mediaResolver = () => "") {
   const hasVisibleText = visibleParagraphs.some(paragraphHasVisibleText);
   const textFitScale = shape.textFitScale && shape.textFitScale > 0 ? shape.textFitScale : 1;
   const innerHtml = hasVisibleText ? visibleParagraphs.map((paragraph) => renderParagraph(paragraph, textFitScale)).join("") : "";
+  const wrappedTextHtml = hasVisibleText ? `<div class="pptx-text-content" style="width:100%;display:block;flex-shrink:0;transform-origin:top left">${innerHtml}</div>` : "";
   const styles = [
     "position:absolute",
     "box-sizing:border-box",
@@ -307,6 +371,7 @@ function renderShape(shape, animationStep, mediaResolver = () => "") {
     const bg = fillToCss(shape.fill, mediaResolver);
     if (bg !== "transparent") styles.push(`background:${bg}`);
   }
+  const gradientBorderOverlay = shape.type !== "image" && shape.type !== "line" ? renderGradientBorderOverlay(shape) : "";
   if (shape.border?.colour && shape.type !== "line") {
     styles.push(`border:${shape.border.width}pt ${shape.border.style || "solid"} ${shape.border.colour}`);
   }
@@ -328,7 +393,11 @@ function renderShape(shape, animationStep, mediaResolver = () => "") {
   if (shape.type === "line") {
     return renderLineShape(shape, styles);
   }
-  return `<div style="${styles.join(";")}">${innerHtml}</div>`;
+  const containerAttributes = [`style="${styles.join(";")}"`];
+  if (hasVisibleText) {
+    containerAttributes.push('class="pptx-text-shape"');
+  }
+  return `<div ${containerAttributes.join(" ")}>${gradientBorderOverlay}${wrappedTextHtml}</div>`;
 }
 function buildSlideState(slide, animationStep, mediaResolver = () => "") {
   return {
@@ -373,7 +442,18 @@ function asArray(value) {
 function hasAnyValue(obj) {
   return Boolean(obj) && Object.values(obj).some((value) => value !== void 0);
 }
-function createXmlParser() {
+function createXmlParser(options = {}) {
+  if (options.preserveOrder) {
+    return new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: "@_",
+      allowBooleanAttributes: true,
+      parseAttributeValue: false,
+      parseTagValue: false,
+      trimValues: false,
+      preserveOrder: true
+    });
+  }
   return new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: "@_",
@@ -414,6 +494,92 @@ function createXmlParser() {
       return alwaysArray.has(name);
     }
   });
+}
+function findOrderedChildNode(children, name) {
+  if (!Array.isArray(children)) return void 0;
+  return children.find((child) => child && typeof child === "object" && Object.prototype.hasOwnProperty.call(child, name));
+}
+function findOrderedChild(children, name) {
+  return findOrderedChildNode(children, name)?.[name];
+}
+function getOrderedDrawableId(children, nvName) {
+  const nvChildren = findOrderedChild(children, nvName);
+  const cNvPrNode = nvChildren ? findOrderedChildNode(nvChildren, "p:cNvPr") : void 0;
+  const id = cNvPrNode?.[":@"]?.["@_id"];
+  return id !== void 0 ? String(id) : void 0;
+}
+function collectOrderedShapeMetadata(nodes, state = { textBodyMap: /* @__PURE__ */ new Map(), drawableIds: [] }) {
+  if (!Array.isArray(nodes)) return map;
+  for (const node of nodes) {
+    if (!node || typeof node !== "object") continue;
+    const shapeChildren = node["p:sp"] || node["p:cxnSp"];
+    if (shapeChildren) {
+      const id = node["p:sp"] ? getOrderedDrawableId(shapeChildren, "p:nvSpPr") : getOrderedDrawableId(shapeChildren, "p:nvCxnSpPr");
+      const txBody = findOrderedChild(shapeChildren, "p:txBody");
+      if (id) state.drawableIds.push(id);
+      if (id && txBody) state.textBodyMap.set(id, txBody);
+      collectOrderedShapeMetadata(shapeChildren, state);
+      continue;
+    }
+    const picChildren = node["p:pic"];
+    if (picChildren) {
+      const id = getOrderedDrawableId(picChildren, "p:nvPicPr");
+      if (id) state.drawableIds.push(id);
+      collectOrderedShapeMetadata(picChildren, state);
+      continue;
+    }
+    const groupChildren = node["p:grpSp"];
+    if (groupChildren) {
+      collectOrderedShapeMetadata(groupChildren, state);
+      continue;
+    }
+    const alternateContentChildren = node["mc:AlternateContent"] || node.AlternateContent || node["mc:Choice"] || node.Choice || node["mc:Fallback"] || node.Fallback;
+    if (alternateContentChildren) {
+      collectOrderedShapeMetadata(alternateContentChildren, state);
+      continue;
+    }
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) collectOrderedShapeMetadata(value, state);
+    }
+  }
+  return state;
+}
+function parseOrderedShapeMetadata(xml, orderedParser) {
+  if (!xml) return { orderedTextBodyMap: void 0, orderedDrawableIds: void 0 };
+  try {
+    const { textBodyMap, drawableIds } = collectOrderedShapeMetadata(orderedParser.parse(xml));
+    return {
+      orderedTextBodyMap: textBodyMap.size ? textBodyMap : void 0,
+      orderedDrawableIds: drawableIds.length ? drawableIds : void 0
+    };
+  } catch {
+    return { orderedTextBodyMap: void 0, orderedDrawableIds: void 0 };
+  }
+}
+function sortShapesByDrawOrder(shapes, orderedDrawableIds) {
+  if (!Array.isArray(shapes) || !Array.isArray(orderedDrawableIds) || !orderedDrawableIds.length) {
+    return shapes;
+  }
+  const drawOrder = /* @__PURE__ */ new Map();
+  orderedDrawableIds.forEach((id, index) => {
+    if (!drawOrder.has(id)) drawOrder.set(id, index);
+  });
+  return shapes.map((shape, index) => ({
+    shape,
+    index,
+    order: drawOrder.get(String(shape?.sourceShapeId || ""))
+  })).sort((left, right) => {
+    const leftKnown = left.order !== void 0;
+    const rightKnown = right.order !== void 0;
+    if (leftKnown && rightKnown) return left.order - right.order || left.index - right.index;
+    if (leftKnown) return -1;
+    if (rightKnown) return 1;
+    return left.index - right.index;
+  }).map(({ shape }) => shape);
+}
+function getOrderedParagraphNodes(orderedTxBody) {
+  if (!Array.isArray(orderedTxBody)) return [];
+  return orderedTxBody.filter((child) => child && typeof child === "object" && child["a:p"]).map((child) => child["a:p"]);
 }
 function normColour(val) {
   if (!val) return void 0;
@@ -883,7 +1049,14 @@ function mergeParagraphsFromTemplate(paragraphs, templateParagraphs, masterTextS
     };
   });
 }
-function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles) {
+function appendTextRun(runs, node, paragraphRunDefaults, themeColours, defaultFont) {
+  if (!node) return;
+  const rPr = node["a:rPr"];
+  const text = node["a:t"] != null ? String(node["a:t"]) : "";
+  const runDefaults = mergeRunDefaults(paragraphRunDefaults, parseRunStyleDefaults(rPr, themeColours, defaultFont));
+  runs.push(applyRunDefaults({ text }, runDefaults));
+}
+function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles, orderedTxBody) {
   if (!txBody) return [];
   const paragraphs = [];
   const pList = txBody["a:p"];
@@ -891,7 +1064,10 @@ function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles) {
   const pArray = Array.isArray(pList) ? pList : [pList];
   const localTextStyles = parseListStyleDefaults(txBody["a:lstStyle"], themeColours, defaultFont);
   const textStyleMap = mergeTextStyleMaps(inheritedTextStyles, localTextStyles);
-  for (const p of pArray) {
+  const orderedParagraphs = getOrderedParagraphNodes(orderedTxBody);
+  for (let paragraphIndex = 0; paragraphIndex < pArray.length; paragraphIndex++) {
+    const p = pArray[paragraphIndex];
+    const orderedParagraph = orderedParagraphs[paragraphIndex];
     const pPr = p["a:pPr"];
     const level = Number(pPr?.["@_lvl"] || 0);
     const paragraphDefaults = mergeParagraphDefaults(
@@ -903,8 +1079,12 @@ function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles) {
     let bulletChar = paragraphDefaults?.bulletChar;
     let lineSpacing = paragraphDefaults?.lineSpacing;
     const runs = [];
-    const rList = p["a:r"];
-    const fldList = p["a:fld"];
+    const rArray = asArray(p["a:r"]);
+    const fldArray = asArray(p["a:fld"]);
+    const brArray = asArray(p["a:br"]);
+    let runIndex = 0;
+    let fieldIndex = 0;
+    let breakIndex = 0;
     const paragraphRunDefaults = mergeRunDefaults(
       paragraphDefaults?.runDefaults,
       parseRunStyleDefaults(pPr?.["a:defRPr"], themeColours, defaultFont)
@@ -913,30 +1093,35 @@ function parseTextBody(txBody, themeColours, defaultFont, inheritedTextStyles) {
       paragraphRunDefaults,
       parseRunStyleDefaults(p["a:endParaRPr"], themeColours, defaultFont)
     );
-    if (rList) {
-      const rArray = Array.isArray(rList) ? rList : [rList];
-      for (const r of rArray) {
-        const rPr = r["a:rPr"];
-        const text = r["a:t"] != null ? String(r["a:t"]) : "";
-        const runDefaults = mergeRunDefaults(paragraphRunDefaults, parseRunStyleDefaults(rPr, themeColours, defaultFont));
-        runs.push(applyRunDefaults({ text }, runDefaults));
+    if (orderedParagraph?.length) {
+      for (const child of orderedParagraph) {
+        if (child["a:r"]) {
+          appendTextRun(runs, rArray[runIndex], paragraphRunDefaults, themeColours, defaultFont);
+          runIndex += 1;
+          continue;
+        }
+        if (child["a:fld"]) {
+          appendTextRun(runs, fldArray[fieldIndex], paragraphRunDefaults, themeColours, defaultFont);
+          fieldIndex += 1;
+          continue;
+        }
+        if (child["a:br"]) {
+          runs.push({ text: "\n" });
+          breakIndex += 1;
+        }
       }
     }
-    if (fldList) {
-      const fldArray = Array.isArray(fldList) ? fldList : [fldList];
-      for (const fld of fldArray) {
-        const rPr = fld["a:rPr"];
-        const text = fld["a:t"] != null ? String(fld["a:t"]) : "";
-        const runDefaults = mergeRunDefaults(paragraphRunDefaults, parseRunStyleDefaults(rPr, themeColours, defaultFont));
-        runs.push(applyRunDefaults({ text }, runDefaults));
-      }
+    while (runIndex < rArray.length) {
+      appendTextRun(runs, rArray[runIndex], paragraphRunDefaults, themeColours, defaultFont);
+      runIndex += 1;
     }
-    const brList = p["a:br"];
-    if (brList) {
-      const brArray = Array.isArray(brList) ? brList : [brList];
-      for (const _br of brArray) {
-        runs.push({ text: "\n" });
-      }
+    while (fieldIndex < fldArray.length) {
+      appendTextRun(runs, fldArray[fieldIndex], paragraphRunDefaults, themeColours, defaultFont);
+      fieldIndex += 1;
+    }
+    while (breakIndex < brArray.length) {
+      runs.push({ text: "\n" });
+      breakIndex += 1;
     }
     if (runs.length === 0) {
       runs.push(applyRunDefaults({ text: "" }, emptyParagraphRunDefaults));
@@ -1127,7 +1312,7 @@ function parseCustomGeometry(spPr) {
     svgViewBoxHeight: svgViewBoxHeight || void 0
   };
 }
-function parseShape(spNode, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds = []) {
+function parseShape(spNode, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds = [], orderedTextBodyMap) {
   const nvSpPr = spNode["p:nvSpPr"] || spNode["p:nvCxnSpPr"];
   const cNvPr = nvSpPr?.["p:cNvPr"];
   const id = String(cNvPr?.["@_id"] || "");
@@ -1143,7 +1328,7 @@ function parseShape(spNode, slideRels, themeColours, defaultFont, themeLineStyle
   const lineTail = parseLineEndType(spPr?.["a:ln"], "a:tailEnd");
   const flip = parseFlipFlags(spPr?.["a:xfrm"]);
   const txBody = spNode["p:txBody"];
-  const paragraphs = parseTextBody(txBody, themeColours, defaultFont);
+  const paragraphs = parseTextBody(txBody, themeColours, defaultFont, void 0, orderedTextBodyMap?.get(id));
   let verticalAlign;
   const bodyPr = txBody?.["a:bodyPr"];
   if (bodyPr) {
@@ -1250,14 +1435,14 @@ function parsePicture(picNode, slideRels, themeColours, groupContext, ancestorGr
     animationEffect: "appear"
   };
 }
-function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds = []) {
+function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds = [], orderedTextBodyMap) {
   const shapes = [];
   if (!spTree) return shapes;
   const spNodes = spTree["p:sp"];
   if (spNodes) {
     const list = Array.isArray(spNodes) ? spNodes : [spNodes];
     for (const sp of list) {
-      shapes.push(parseShape(sp, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds));
+      shapes.push(parseShape(sp, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds, orderedTextBodyMap));
     }
   }
   const picNodes = spTree["p:pic"];
@@ -1271,7 +1456,7 @@ function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, them
   if (cxnSpNodes) {
     const list = Array.isArray(cxnSpNodes) ? cxnSpNodes : [cxnSpNodes];
     for (const cxn of list) {
-      shapes.push(parseShape(cxn, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds));
+      shapes.push(parseShape(cxn, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds, orderedTextBodyMap));
     }
   }
   const grpSpNodes = spTree["p:grpSp"];
@@ -1281,7 +1466,18 @@ function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, them
       const groupId = getGroupNodeId(grp);
       const nextAncestorGroupIds = groupId ? [...ancestorGroupIds, groupId] : ancestorGroupIds;
       const nextGroupContext = parseGroupContext(grp, groupContext);
-      shapes.push(...collectDrawableNodes(grp, slideRels, themeColours, defaultFont, themeLineStyles, nextGroupContext, nextAncestorGroupIds));
+      shapes.push(
+        ...collectDrawableNodes(
+          grp,
+          slideRels,
+          themeColours,
+          defaultFont,
+          themeLineStyles,
+          nextGroupContext,
+          nextAncestorGroupIds,
+          orderedTextBodyMap
+        )
+      );
     }
   }
   const alternateContentNodes = [
@@ -1293,7 +1489,18 @@ function collectDrawableNodes(spTree, slideRels, themeColours, defaultFont, them
     const choice = asArray(alternateContent?.["mc:Choice"])[0] || asArray(alternateContent?.Choice)[0];
     const drawableContainer = fallback || choice;
     if (drawableContainer) {
-      shapes.push(...collectDrawableNodes(drawableContainer, slideRels, themeColours, defaultFont, themeLineStyles, groupContext, ancestorGroupIds));
+      shapes.push(
+        ...collectDrawableNodes(
+          drawableContainer,
+          slideRels,
+          themeColours,
+          defaultFont,
+          themeLineStyles,
+          groupContext,
+          ancestorGroupIds,
+          orderedTextBodyMap
+        )
+      );
     }
   }
   return shapes;
@@ -1499,11 +1706,23 @@ function parseSlideBackground(bgNode, slideRels, themeColours) {
   }
   return void 0;
 }
-function parseLayoutMasterShapes(spTree, rels, themeColours, defaultFont, themeLineStyles) {
+function parseLayoutMasterShapes(spTree, rels, themeColours, defaultFont, themeLineStyles, orderedTextBodyMap, orderedDrawableIds) {
   const shapes = [];
   const placeholders = [];
   if (!spTree) return { shapes, placeholders };
-  const drawableNodes = collectDrawableNodes(spTree, rels, themeColours, defaultFont, themeLineStyles);
+  const drawableNodes = sortShapesByDrawOrder(
+    collectDrawableNodes(
+      spTree,
+      rels,
+      themeColours,
+      defaultFont,
+      themeLineStyles,
+      void 0,
+      [],
+      orderedTextBodyMap
+    ),
+    orderedDrawableIds
+  );
   for (const shape of drawableNodes) {
     if (shape.placeholder) {
       placeholders.push(shape);
@@ -1553,6 +1772,7 @@ function parseNotes(notesXmlStr, parser) {
 async function parsePptx(filePath, deckId, getDeckDir) {
   const zip = new AdmZip(filePath);
   const parser = createXmlParser();
+  const orderedParser = createXmlParser({ preserveOrder: true });
   const presXml = zip.readAsText("ppt/presentation.xml");
   const { width, height, slideRIds } = parsePresentationXml(presXml, parser);
   const presRelsXml = zip.readAsText("ppt/_rels/presentation.xml.rels");
@@ -1658,6 +1878,7 @@ async function parsePptx(filePath, deckId, getDeckDir) {
     try {
       const xml = zip.readAsText(layoutFullPath);
       const doc = parser.parse(xml);
+      const { orderedTextBodyMap, orderedDrawableIds } = parseOrderedShapeMetadata(xml, orderedParser);
       const sldLayout = doc?.["p:sldLayout"];
       const cSld = sldLayout?.["p:cSld"];
       const showMasterShapes = sldLayout?.["@_showMasterSp"] !== "0" && sldLayout?.["@_showMasterSp"] !== "false";
@@ -1682,7 +1903,9 @@ async function parsePptx(filePath, deckId, getDeckDir) {
         layoutRels,
         themeData.colours,
         themeData.defaultFont,
-        themeData.lineStyles
+        themeData.lineStyles,
+        orderedTextBodyMap,
+        orderedDrawableIds
       );
       extractMediaFromShapes(shapes, layoutDir);
       extractMediaFromShapes(placeholders, layoutDir);
@@ -1698,6 +1921,7 @@ async function parsePptx(filePath, deckId, getDeckDir) {
     try {
       const xml = zip.readAsText(masterFullPath);
       const doc = parser.parse(xml);
+      const { orderedTextBodyMap, orderedDrawableIds } = parseOrderedShapeMetadata(xml, orderedParser);
       const sldMaster = doc?.["p:sldMaster"];
       const cSld = sldMaster?.["p:cSld"];
       const textStyles = parseMasterTextStyles(sldMaster?.["p:txStyles"], themeData.colours, themeData.defaultFont);
@@ -1719,7 +1943,9 @@ async function parsePptx(filePath, deckId, getDeckDir) {
         masterRels,
         themeData.colours,
         themeData.defaultFont,
-        themeData.lineStyles
+        themeData.lineStyles,
+        orderedTextBodyMap,
+        orderedDrawableIds
       );
       extractMediaFromShapes(shapes, masterDir);
       extractMediaFromShapes(placeholders, masterDir);
@@ -1741,6 +1967,7 @@ async function parsePptx(filePath, deckId, getDeckDir) {
       continue;
     }
     const slideDoc = parser.parse(slideXml);
+    const { orderedTextBodyMap, orderedDrawableIds } = parseOrderedShapeMetadata(slideXml, orderedParser);
     const sld = slideDoc?.["p:sld"];
     const slideRelsPath = `ppt/${slideDir}/_rels/${slideBaseName}.rels`;
     let slideRels = {};
@@ -1772,12 +1999,18 @@ async function parsePptx(filePath, deckId, getDeckDir) {
       background = masterData.background;
     }
     const spTree = cSld?.["p:spTree"];
-    const rawSlideShapes = collectDrawableNodes(
-      spTree,
-      slideRels,
-      themeData.colours,
-      themeData.defaultFont,
-      themeData.lineStyles
+    const rawSlideShapes = sortShapesByDrawOrder(
+      collectDrawableNodes(
+        spTree,
+        slideRels,
+        themeData.colours,
+        themeData.defaultFont,
+        themeData.lineStyles,
+        void 0,
+        [],
+        orderedTextBodyMap
+      ),
+      orderedDrawableIds
     );
     const slideShapes = rawSlideShapes.map((shape) => {
       if (!shape.placeholder) return shape;

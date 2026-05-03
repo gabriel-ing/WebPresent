@@ -2,8 +2,17 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { extensionFor, mimeTypeFromPath, mediaKindFromPath } = require('../electron/utils.cjs');
+const {
+  extensionFor,
+  mimeTypeFromPath,
+  mediaKindFromPath,
+  readFileForPreviewAsset,
+} = require('../electron/utils.cjs');
 const { extractSlideNumber, sortSlidePaths } = require('../electron/fileSortUtils.cjs');
+const {
+  PRESENTATION_INPUT_ACTIONS,
+  getPresentationInputAction,
+} = require('../electron/presentationInput.cjs');
 
 // ── extensionFor ─────────────────────────────────────────────────────────────
 
@@ -48,6 +57,17 @@ test('mediaKindFromPath identifies image extensions', () => {
   assert.equal(mediaKindFromPath('/x/diagram.svg'), 'image');
 });
 
+test('readFileForPreviewAsset keeps preview media as raw bytes for blob URLs', async () => {
+  const source = Buffer.from('preview-bytes');
+
+  const asset = await readFileForPreviewAsset('/slides/photo.jpeg', {
+    readFile: async () => source,
+  });
+
+  assert.equal(asset.mimeType, 'image/jpeg');
+  assert.deepEqual(Buffer.from(asset.buffer), source);
+});
+
 // ── extractSlideNumber ────────────────────────────────────────────────────────
 
 test('extractSlideNumber returns number for matching filenames', () => {
@@ -82,4 +102,31 @@ test('sortSlidePaths does not mutate the original array', () => {
   const copy = [...input];
   sortSlidePaths(input);
   assert.deepEqual(input, copy);
+});
+
+// ── presentation input mapping ───────────────────────────────────────────────
+
+test('getPresentationInputAction maps Shift+Right to next', () => {
+  const action = getPresentationInputAction({ type: 'keyDown', key: 'ArrowRight', shift: true });
+  assert.equal(action, PRESENTATION_INPUT_ACTIONS.next);
+});
+
+test('getPresentationInputAction maps Shift+Left to previous', () => {
+  const action = getPresentationInputAction({ type: 'keyDown', key: 'ArrowLeft', shift: true });
+  assert.equal(action, PRESENTATION_INPUT_ACTIONS.previous);
+});
+
+test('getPresentationInputAction maps Escape to exit', () => {
+  const action = getPresentationInputAction({ type: 'keyDown', key: 'Escape' });
+  assert.equal(action, PRESENTATION_INPUT_ACTIONS.exit);
+});
+
+test('getPresentationInputAction ignores auto-repeat key presses', () => {
+  const action = getPresentationInputAction({
+    type: 'keyDown',
+    key: 'ArrowRight',
+    shift: true,
+    isAutoRepeat: true,
+  });
+  assert.equal(action, null);
 });

@@ -6,3 +6,4 @@ release
 .DS_Stores
 *.pptx
 .tmp-decks/
+*.pdf
